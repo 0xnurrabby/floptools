@@ -216,7 +216,7 @@ function SignComposer() {
       {didRetry ? (
         <div className="mt-6">
           <Note tone="warn">
-            First attempt refused (403). The server asked for this exact string — re-signed and retried once:
+            First attempt refused (403). The server asked for this exact string · re-signed and retried once:
             <pre className="mt-2 max-h-28 overflow-auto rounded-[8px] bg-canvas p-2 font-mono text-[13px] text-ink">{didRetry}</pre>
           </Note>
         </div>
@@ -287,7 +287,7 @@ function SignComposer() {
               <TerminalCard title="say-signed" className="mt-3">
                 <span className="text-mute">status:</span> {result.status}
                 {"\n"}
-                <span className="text-mute">seq:</span> {result.seq ?? "—"}
+                <span className="text-mute">seq:</span> {result.seq ?? "n/a"}
                 {"\n\n"}
                 {result.body.slice(0, 400)}
               </TerminalCard>
@@ -413,7 +413,7 @@ function ReceiptRow({ receipt }: { receipt: Receipt }) {
           ) : null}
           {!verifyResult.found ? (
             <p className="caption-sm mt-1.5 text-body">
-              A room read only sees the newest ~200 messages, and this one rolls past them in seconds — so the
+              A room read only sees the newest ~200 messages, and this one rolls past them in seconds · so the
               record is no longer reachable on the ledger. The green &ldquo;signs&rdquo; chip above is your
               proof: the offline signature over room|nonce|text still verifies.
             </p>
@@ -430,7 +430,7 @@ function ReceiptRow({ receipt }: { receipt: Receipt }) {
           <ReceiptField k="response sha256" v={receipt.responseHash} />
           <div className="flex flex-col gap-1.5 border-t border-hairline pt-3">
             <span className="caption-sm text-mute">
-              Raw signed write URL — single use. Replaying it in a browser is refused (400 nonce ... not greater than ...).
+              Raw signed write URL · single use. Replaying it in a browser is refused (400 nonce ... not greater than ...).
             </span>
             <CopyButton
               value={`${TECHNOBASE}/r/${receipt.room}/say-signed/${receipt.did}/${receipt.sig}/${receipt.nonce}/${encodeURIComponent(receipt.text)}`}

@@ -1,5 +1,5 @@
 /**
- * Technocore client — read-only proxy-safe wrapper over the public HTTP API.
+ * Technocore client · read-only proxy-safe wrapper over the public HTTP API.
  *
  * Two transport modes:
  *   - "proxy" (browser): requests go to the same-origin `/api/tc?u=<path>`
@@ -204,7 +204,7 @@ export class TechnocoreClient {
         const parsed = JSON.parse(res.body) as { posted?: TcMessage };
         posted = parsed.posted;
       } catch {
-        /* text lane — fine, posted is undefined */
+        /* text lane · fine, posted is undefined */
       }
     }
     return { status: res.status, url: res.url, body: res.body, posted };

@@ -63,14 +63,14 @@ export default function Home() {
         </p>
       </section>
 
-      {/* Terminal — the design's single "product preview" */}
+      {/* Terminal · the design's single "product preview" */}
       <section aria-label="The loop">
         <div className="overflow-hidden rounded-[12px] border border-hairline bg-canvas">
           <div className="flex items-center gap-2 border-b border-hairline bg-surface-soft px-4 py-2.5">
             <span className="traffic-light traffic-red" aria-hidden />
             <span className="traffic-light traffic-yellow" aria-hidden />
             <span className="traffic-light traffic-green" aria-hidden />
-            <span className="caption-sm ml-1 font-mono text-mute">floptools — the loop</span>
+            <span className="caption-sm ml-1 font-mono text-mute">floptools · the loop</span>
           </div>
           <div className="code-sm overflow-x-auto whitespace-pre-wrap break-all p-6 text-ink">
             <span className="text-mute"># 1 create</span>
@@ -137,7 +137,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Dark strip — the single inverted moment */}
+      {/* Dark strip · the single inverted moment */}
       <section className="pt-14">
         <div className="flex flex-wrap items-center justify-between gap-4 rounded-[12px] bg-surface-dark px-6 py-6 text-on-dark">
           <div>

@@ -4,7 +4,7 @@
  * whose Unicode general category is Cc, Cf, Cs, Co, Zl or Zp becomes a space,
  * then leading/trailing whitespace is trimmed.
  *
- * A message is signed AFTER this sweep — the bytes that get stored — so a
+ * A message is signed AFTER this sweep · the bytes that get stored · so a
  * record stays re-verifiable later. Signing raw text yields a 403.
  */
 
@@ -35,7 +35,7 @@ export function assertMessageLength(text: string): void {
   const len = [...text].length;
   if (len > MAX_MESSAGE_CHARS) {
     throw new Error(
-      `${len} characters after the sweep, over the ${MAX_MESSAGE_CHARS}-character message cap — split it`,
+      `${len} characters after the sweep, over the ${MAX_MESSAGE_CHARS}-character message cap · split it`,
     );
   }
 }

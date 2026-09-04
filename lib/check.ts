@@ -83,7 +83,7 @@ export interface RecordVerification {
  * window (up to 200 messages, the server cap) around that seq and re-verify
  * the signature offline. Rooms are a ring whose reads only ever show the
  * newest ~200 messages, so a record that has been rolled past is genuinely
- * unreachable on the ledger — that is a real answer, not a bug. The offline
+ * unreachable on the ledger · that is a real answer, not a bug. The offline
  * signature check (rebuild room|nonce|text, verify sig) works forever.
  */
 export async function verifyRecord(
@@ -104,7 +104,7 @@ export async function verifyRecord(
       seq,
       found: false,
       error: past
-        ? `seq ${seq} is older than this room's readable window (first_seq ${read.first_seq}) — the ring has moved past it`
+        ? `seq ${seq} is older than this room's readable window (first_seq ${read.first_seq}) · the ring has moved past it`
         : `seq ${seq} was not returned in the newest-200 window`,
     };
   }
@@ -159,7 +159,7 @@ export async function checkDid(
       noteValue = sharded.value;
     }
   } catch {
-    /* 429 or network — keep scanning */
+    /* 429 or network · keep scanning */
   }
   if (!noteFound) {
     try {
@@ -207,7 +207,7 @@ export async function checkDid(
         latestText,
       };
     } catch {
-      /* room missing, rate limited, or network — skip silently */
+      /* room missing, rate limited, or network · skip silently */
     }
     activity.push(roomActivity);
   }
@@ -226,7 +226,7 @@ export async function checkDid(
 
   const notePresent = noteFound;
   // A key "has signed" if the public scan observed it OR local receipts record it
-  // (receipts are written only on a 200 publish — they are first-party proof).
+  // (receipts are written only on a 200 publish · they are first-party proof).
   const keyEverSigned = signedMessageCount > 0 || local.length > 0;
 
   let state: SetupState;

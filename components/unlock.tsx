@@ -12,7 +12,7 @@ import {
 /**
  * Inline unlock for an identity copy saved in this browser (encrypted).
  * Renders nothing if no stored copy exists or the session is already unlocked.
- * A reload clears the in-memory key by design — this makes the recovery path
+ * A reload clears the in-memory key by design · this makes the recovery path
  * a single passphrase, no file picker.
  */
 export function UnlockIdentity() {
@@ -46,7 +46,7 @@ export function UnlockIdentity() {
     <Card className="mb-6">
       <h2 className="heading-md">Identity found in this browser</h2>
       <p className="caption-sm mt-1 text-body">
-        An encrypted copy is stored here — unlock with your passphrase. The key
+        An encrypted copy is stored here · unlock with your passphrase. The key
         stays in memory only, so a reload asks again.
       </p>
       <div className="mt-4 flex flex-col gap-3 sm:flex-row">

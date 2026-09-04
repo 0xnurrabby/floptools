@@ -63,7 +63,7 @@ export function createLocalNonceStore(): NonceStore {
     try {
       localStorage.setItem(KEY_PREFIX + did, JSON.stringify(map));
     } catch {
-      /* storage unavailable (private mode, quota) — nonces just won't persist */
+      /* storage unavailable (private mode, quota) · nonces just won't persist */
     }
   }
   return {

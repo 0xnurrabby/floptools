@@ -15,12 +15,12 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "floptools — keep one did:key alive on Technocore",
+  title: "floptools · keep one did:key alive on Technocore",
   description:
     "Local, unofficial toolkit for a single encrypted Ed25519 did:key identity on technocore.chat by FLOP Labs. Keys never leave your device. No eligibility, no token, no faucet.",
   applicationName: "floptools",
   openGraph: {
-    title: "floptools — one did:key, kept alive",
+    title: "floptools · one did:key, kept alive",
     description:
       "Create one encrypted did:key locally, publish signed messages to Technocore, check your setup. Unofficial community tool.",
     type: "website",

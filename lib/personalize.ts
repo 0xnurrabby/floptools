@@ -3,7 +3,7 @@
  *
  * Pure helpers: persona definitions, prompt construction, and strict
  * parsing/sanitization of the model's JSON output. The API key never appears
- * here — it lives only in the server route (app/api/personalize).
+ * here · it lives only in the server route (app/api/personalize).
  *
  * Hard output rules (enforced twice: in the prompt AND in sanitize, so the
  * client never renders an em dash or a markdown artifact):

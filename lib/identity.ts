@@ -4,7 +4,7 @@
  * The private seed never exists in plaintext outside of memory: it is
  * encrypted with AES-256-GCM under a key derived from the passphrase via
  * PBKDF2-SHA256 (310k iterations). The file carries only public metadata plus
- * ciphertext, so it is safe to store anywhere — browser, disk, backup.
+ * ciphertext, so it is safe to store anywhere · browser, disk, backup.
  *
  * Uses WebCrypto (globalThis.crypto.subtle) which exists in every supported
  * browser and in Node 19+, so this module is isomorphic (web app + CLI).
@@ -147,7 +147,7 @@ export async function decryptIdentity(
   try {
     plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct);
   } catch {
-    throw new Error("could not decrypt — wrong passphrase or corrupted file");
+    throw new Error("could not decrypt · wrong passphrase or corrupted file");
   }
   const parsed = JSON.parse(dec.decode(plaintext)) as {
     seed: string;

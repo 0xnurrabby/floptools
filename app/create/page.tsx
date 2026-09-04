@@ -77,7 +77,7 @@ export default function CreatePage() {
         saveEncryptedIdentity(identity);
         setNotice("Created. A copy is saved in this browser (encrypted).");
       } else {
-        setNotice("Created. Keep the file and passphrase — they are the only way back.");
+        setNotice("Created. Keep the file and passphrase · they are the only way back.");
       }
     } catch (e) {
       setError((e as Error).message);
@@ -96,7 +96,7 @@ export default function CreatePage() {
     setBusy("unlock");
     try {
       await unlockFromFile(restoreFile, restorePass);
-      setNotice("Unlocked — the key is in memory only.");
+      setNotice("Unlocked · the key is in memory only.");
       setRestorePass("");
     } catch (e) {
       setError((e as Error).message);
@@ -107,7 +107,7 @@ export default function CreatePage() {
 
   const onLock = () => {
     lock();
-    setNotice("Locked — key removed from memory.");
+    setNotice("Locked · key removed from memory.");
   };
 
   const redownload = () => {
@@ -131,7 +131,7 @@ export default function CreatePage() {
         <Card>
           <h2 className="heading-md">New keypair</h2>
           <div className="mt-4 space-y-4">
-            <Field label="Passphrase" hint={`≥ ${MIN_PASSPHRASE_LENGTH} chars. No recovery — this is the only way back.`}>
+            <Field label="Passphrase" hint={`≥ ${MIN_PASSPHRASE_LENGTH} chars. No recovery · this is the only way back.`}>
               <TextInput
                 type="password"
                 value={pass}
@@ -156,7 +156,7 @@ export default function CreatePage() {
                 onChange={(e) => setKeepInBrowser(e.target.checked)}
                 className="h-4 w-4 rounded-sm accent-ink"
               />
-              Keep encrypted copy here (recommended — unlock with passphrase only)
+              Keep encrypted copy here (recommended · unlock with passphrase only)
             </label>
             <Button onClick={onCreate} disabled={busy !== null || !!did} className="w-full">
               {busy === "create" ? "Generating…" : did ? "Identity already unlocked" : "Generate & encrypt"}

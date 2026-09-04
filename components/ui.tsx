@@ -274,7 +274,7 @@ export function DidText({
   prefixChars?: number;
   suffixChars?: number;
 }) {
-  if (!did) return <span className="text-mute">—</span>;
+  if (!did) return <span className="text-mute">n/a</span>;
   const head = did.slice(0, prefixChars);
   const tail = did.slice(-suffixChars);
   return (

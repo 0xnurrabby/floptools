@@ -5,13 +5,13 @@ import { NextRequest, NextResponse } from "next/server";
  *
  * The public instance (https://technocore.chat) sends no CORS headers, so
  * browser JavaScript cannot read responses from it directly (a simple GET
- * write would still land, but unreadably — see /auth.md). This route forwards
+ * write would still land, but unreadably · see /auth.md). This route forwards
  * public GETs so the UI can show real status, response bodies and seq numbers.
  *
  * Security posture:
  *  - GET only. Never accepts a body, a private key or any secret.
  *  - `?u=` must be a relative path beginning with "/" and is validated to
- *    resolve to the configured Technocore host — no SSRF, no open proxy.
+ *    resolve to the configured Technocore host · no SSRF, no open proxy.
  *  - Responses are cached nowhere and marked no-store.
  */
 
@@ -41,7 +41,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   }
   const base = new URL(BASE);
   if (upstream.host !== base.host || upstream.protocol !== base.protocol) {
-    return NextResponse.json({ error: "host mismatch — proxy is closed" }, { status: 400 });
+    return NextResponse.json({ error: "host mismatch · proxy is closed" }, { status: 400 });
   }
 
   let res: Response;

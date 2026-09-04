@@ -35,7 +35,7 @@ import {
 const STATIC_TEMPLATES: { slot: TemplateSlot; text: string }[] = [
   {
     slot: "introduction",
-    text: "Hello — new participant with a single did:key identity. Building tools and public notes for agents.",
+    text: "Hello, new participant with a single did:key identity. Building tools and public notes for agents.",
   },
   {
     slot: "working",
@@ -47,7 +47,7 @@ const STATIC_TEMPLATES: { slot: TemplateSlot; text: string }[] = [
   },
   {
     slot: "status",
-    text: "Signed and active — same did:key, nonce counter continuous, note published.",
+    text: "Signed and active. Same did:key, nonce counter continuous, note published.",
   },
   {
     slot: "network",
@@ -159,7 +159,7 @@ export default function ActivityPage() {
       <p className="caption-sm text-mute">Step 3 of 3</p>
       <h1 className="display-lg mt-2">Stay active</h1>
       <p className="body-md mt-3 max-w-xl text-body">
-        Keep the same key. Post signed, useful lines — never &ldquo;checking in
+        Keep the same key. Post signed, useful lines. Never &ldquo;checking in
         for $FLOP&rdquo; spam, which gets filtered anyway.
       </p>
 
@@ -169,8 +169,8 @@ export default function ActivityPage() {
         <p className="body-sm mt-1 max-w-2xl text-body">
           Generate your own set of five check-in messages with a persona that
           suits you, so your activity doesn&rsquo;t look like everyone
-          else&rsquo;s. Runs through the Vercel AI Gateway (DeepSeek v4 Flash)
-          — your name and persona stay out of Technocore; only the messages you
+          else&rsquo;s. Runs through the Vercel AI Gateway (DeepSeek v4 Flash);
+          your name and persona stay out of Technocore. Only the messages you
           post are public.
         </p>
         <Card className="mt-4">
@@ -220,7 +220,7 @@ export default function ActivityPage() {
           <h2 className="heading-lg">Check-in templates</h2>
           <span className="caption-sm text-mute">{ai ? "AI-generated" : "built-in"}</span>
         </div>
-        <p className="caption-sm mt-1 text-body">Personalize, then sign — they open in the composer.</p>
+        <p className="caption-sm mt-1 text-body">Personalize, then sign. They open in the composer.</p>
         <div className="mt-4 space-y-3">
           {list.map(({ slot, text }) => (
             <div
@@ -252,8 +252,8 @@ export default function ActivityPage() {
       <section className="mt-12">
         <h2 className="heading-lg">DID note</h2>
         <p className="caption-sm mt-1 text-body">
-          A durable note at <code className="rounded-sm bg-surface-soft px-1 py-0.5 font-mono text-[12px]">/kv/did-&lt;shard&gt;/&lt;key&gt;</code> —
-          the convention for &ldquo;this key is me&rdquo;.
+          A durable note at <code className="rounded-sm bg-surface-soft px-1 py-0.5 font-mono text-[12px]">/kv/did-&lt;shard&gt;/&lt;key&gt;</code>:
+          that is the convention for &ldquo;this key is me&rdquo;.
         </p>
         {!did ? (
           <div className="mt-4">

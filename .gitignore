@@ -47,3 +47,4 @@ dev.log
 start.log
 .log
 .vercel
+.vercel-token.txt

@@ -95,7 +95,7 @@ export default function CheckPage() {
       <p className="caption-sm text-mute">Verification</p>
       <h1 className="display-lg mt-2">Check any did:key</h1>
       <p className="body-md mt-3 max-w-xl text-body">
-        Paste a <code className="rounded-sm bg-surface-soft px-1.5 py-0.5 font-mono text-[13px]">did:key:z6Mk…</code> — all
+        Paste a <code className="rounded-sm bg-surface-soft px-1.5 py-0.5 font-mono text-[13px]">did:key:z6Mk…</code>: all
         reads are public.
       </p>
 
@@ -146,7 +146,7 @@ export default function CheckPage() {
             {!result.noteFound ? (
               <p className="caption-sm mt-3 text-body">
                 <strong className="font-medium text-ink">Durable step missing:</strong> publish your DID note from{" "}
-                <span className="font-mono">/activity</span> — notes survive room rotation, messages do not.
+                <span className="font-mono">/activity</span>; notes survive room rotation, messages do not.
               </p>
             ) : null}
           </Card>
@@ -155,7 +155,7 @@ export default function CheckPage() {
             <div>
               <h2 className="heading-md">Local evidence (this browser)</h2>
               <p className="caption-sm mt-1 text-body">
-                Signed publishes recorded here — the server accepted each one (status 200, seq assigned).
+                Signed publishes recorded here; the server accepted each one (status 200, seq assigned).
               </p>
               <div className="mt-3 space-y-3">
                 {result.localActivity.map((a) => (
@@ -194,7 +194,7 @@ export default function CheckPage() {
                     {a.latestSeq > 0 ? (
                       <span className="caption-sm text-body">seq {a.latestSeq}</span>
                     ) : (
-                      <span className="caption-sm text-mute">—</span>
+                      <span className="caption-sm text-mute">n/a</span>
                     )}
                   </div>
                 ))
@@ -203,7 +203,7 @@ export default function CheckPage() {
             {result.signedMessageCount === 0 ? (
               <p className="caption-sm mt-3 text-body">
                 {result.localCount > 0
-                  ? "The public ring rolled past your records — this room turns over in seconds, and reads only see the newest ~200 messages. That is why the local evidence above matters: the server accepted each publish (200 + seq)."
+                  ? "The public ring rolled past your records: this room turns over in seconds, and reads only see the newest ~200 messages. That is why the local evidence above matters: the server accepted each publish (200 + seq)."
                   : "No signed message from this key is currently in the readable tail. If you signed recently, use the receipt's seq below; otherwise the public room record has rolled past."}
               </p>
             ) : null}
@@ -223,7 +223,7 @@ export default function CheckPage() {
           </div>
 
           <Note tone="info">
-            A note proves nothing on its own — trust it only because signed messages verify against the did inside.
+            A note proves nothing on its own; trust it only because signed messages verify against the did inside.
             Signature = possession of a key, not honesty.
           </Note>
         </div>
@@ -232,7 +232,7 @@ export default function CheckPage() {
       {/* Record verifier */}
       <section className="mt-12">
         <h2 className="heading-lg">Verify one record</h2>
-        <p className="caption-sm mt-1 text-body">Room + seq of any signed message — re-verify its signature right now.</p>
+        <p className="caption-sm mt-1 text-body">Room + seq of any signed message: re-verify its signature right now.</p>
         <div className="mt-4 grid max-w-2xl gap-3 sm:grid-cols-[1fr_120px_auto]">
           <Field label="Room">
             <TextInput value={recRoom} onChange={(e) => setRecRoom(e.target.value)} placeholder="lobby" mono />

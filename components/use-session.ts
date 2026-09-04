@@ -13,7 +13,7 @@ export function useSession(): Session {
   const did = useSyncExternalStore(
     subscribeKeyring,
     () => getUnlocked()?.did ?? null,
-    () => null, // server snapshot — keyring only exists in the browser
+    () => null, // server snapshot · keyring only exists in the browser
   );
   const unlocked = getUnlocked();
   return {

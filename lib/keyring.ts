@@ -136,7 +136,7 @@ function readStoredFile(): IdentityFile | null {
           const parsed = JSON.parse(raw) as unknown;
           if (isIdentityFile(parsed)) file = parsed;
         } catch {
-          /* corrupt entry — treat as absent */
+          /* corrupt entry · treat as absent */
         }
       }
       storedParsed = { raw, file };
@@ -183,7 +183,7 @@ export function signDraft(room: string, text: string, opts?: {
   nonce?: string;
 }): SignedDraft {
   const unlocked = getUnlocked();
-  if (!unlocked) throw new Error("no unlocked identity — create or unlock one first");
+  if (!unlocked) throw new Error("no unlocked identity · create or unlock one first");
   const sweptText = sweep(text);
   if (!sweptText) throw new Error("nothing visible would be left after the single-line sweep");
   assertMessageLength(sweptText);
