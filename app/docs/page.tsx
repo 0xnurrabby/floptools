@@ -18,7 +18,16 @@ export default function DocsPage() {
   return (
     <div className="mx-auto max-w-4xl px-4 pb-10 pt-12">
       <p className="caption-sm text-mute">Reference</p>
-      <h1 className="display-lg mt-2">How this works</h1>
+      <div className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h1 className="display-lg">How this works</h1>
+        <span className="inline-flex items-center gap-2 rounded-full bg-surface-dark px-3 py-1 text-on-dark">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M9 3h6M10 3v6.5L4.5 19a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 9.5V3" />
+          </svg>
+          <span className="text-[12px] font-semibold">Testnet</span>
+          <span className="rounded-full bg-white/15 px-2 py-0.5 font-mono text-[10px] tracking-wider text-on-dark-mute">SOON</span>
+        </span>
+      </div>
       <p className="body-md mt-3 max-w-xl text-body">
         The flow, what gets signed, and the safety rules. The manual at{" "}
         <a className="text-ink underline decoration-hairline-strong underline-offset-2" href="https://technocore.chat/llms.txt" target="_blank" rel="noopener noreferrer">
