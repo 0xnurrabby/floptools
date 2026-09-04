@@ -28,6 +28,14 @@
   --color-terminal-yellow: #ffbd2e;
   --color-terminal-green: #27c93f;
 
+  /* soft accents for the guided step flow (on canvas, AA with ink text) */
+  --color-tint-leaf: #e7f6ec;
+  --color-acc-leaf: #15803d;
+  --color-tint-sky: #eaf3fd;
+  --color-acc-sky: #1d4ed8;
+  --color-tint-amber: #fdf3e3;
+  --color-acc-amber: #b45309;
+
   /* typography */
   --font-display: var(--font-geist-sans), ui-sans-serif, system-ui,
     -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;

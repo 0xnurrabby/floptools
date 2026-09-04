@@ -29,8 +29,9 @@ interface Stats {
     activeDids: number;
     trackedDids: number;
   } | null;
-  dids: { did: string; ip: string; createdAt: string; active: boolean }[];
+  dids: { did: string; ip: string; createdAt: string; lastActive: string; generations: number; tokens: number; active: boolean }[];
   topIps: { ip: string; dids: number }[];
+  ipRows: { ip: string; lastActive: string; pageviews: number; dids: number; aiGens: number }[];
   recent: { ip: string; path: string; createdAt: string }[];
 }
 
@@ -158,33 +159,80 @@ export function AdminDashboard() {
       <section className="mt-10">
         <h2 className="heading-lg">DID states</h2>
         <p className="caption-sm mt-1 text-body">
-          Active = the DID note is present on the ledger (durable signal). Freshness checked for the latest{" "}
-          {o.trackedDids} DIDs, cached 10 minutes.
+          Active = the DID note is present on the ledger (durable signal). Last
+          active = the most recent signed message or AI generation recorded for
+          that DID. Freshness checked for the latest {o.trackedDids} DIDs, cached 10 minutes.
         </p>
         <div className="mt-4 overflow-x-auto rounded-[12px] border border-hairline">
-          <table className="w-full min-w-140 text-left text-[13px]">
+          <table className="w-full min-w-[880px] text-left text-[13px]">
             <thead>
               <tr className="border-b border-hairline bg-surface-soft">
                 <th className="px-4 py-2.5 font-medium text-mute">DID</th>
                 <th className="px-4 py-2.5 font-medium text-mute">IP</th>
                 <th className="px-4 py-2.5 font-medium text-mute">Created</th>
+                <th className="px-4 py-2.5 font-medium text-mute">Last active</th>
+                <th className="px-4 py-2.5 font-medium text-mute">AI gens</th>
+                <th className="px-4 py-2.5 font-medium text-mute">Tokens</th>
                 <th className="px-4 py-2.5 font-medium text-mute">State</th>
               </tr>
             </thead>
             <tbody>
               {stats.dids.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-4 py-6 text-center text-mute">No DIDs recorded yet.</td>
+                  <td colSpan={7} className="px-4 py-6 text-center text-mute">No DIDs recorded yet.</td>
                 </tr>
               ) : (
                 stats.dids.map((d) => (
                   <tr key={d.did} className="border-b border-hairline last:border-0">
                     <td className="max-w-72 break-all px-4 py-2.5 font-mono">{d.did}</td>
                     <td className="px-4 py-2.5 text-body">{d.ip}</td>
-                    <td className="px-4 py-2.5 text-body">{new Date(d.createdAt).toLocaleString()}</td>
+                    <td className="px-4 py-2.5 text-body">{fmtTime(d.createdAt)}</td>
+                    <td className="px-4 py-2.5 text-body">{fmtTime(d.lastActive)}</td>
+                    <td className="px-4 py-2.5 text-body">{d.generations}</td>
+                    <td className="px-4 py-2.5 font-mono text-body">{d.tokens.toLocaleString()}</td>
                     <td className="px-4 py-2.5">
-                      <StatusChip tone={d.active ? "ok" : "empty"}>{d.active ? "active" : "dead"}</StatusChip>
+                      <StatusChip tone={d.active ? "ok" : "empty"}>
+                        {d.active ? "active" : "dead / unknown"}
+                      </StatusChip>
                     </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* Unique IPs */}
+      <section className="mt-10">
+        <h2 className="heading-lg">Unique IPs</h2>
+        <p className="caption-sm mt-1 text-body">
+          Where visitors came from, with their last seen time and what they did.
+        </p>
+        <div className="mt-4 overflow-x-auto rounded-[12px] border border-hairline">
+          <table className="w-full min-w-[560px] text-left text-[13px]">
+            <thead>
+              <tr className="border-b border-hairline bg-surface-soft">
+                <th className="px-4 py-2.5 font-medium text-mute">IP</th>
+                <th className="px-4 py-2.5 font-medium text-mute">Last active</th>
+                <th className="px-4 py-2.5 font-medium text-mute">Views</th>
+                <th className="px-4 py-2.5 font-medium text-mute">DIDs</th>
+                <th className="px-4 py-2.5 font-medium text-mute">AI gens</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stats.ipRows.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-4 py-6 text-center text-mute">No visits recorded yet.</td>
+                </tr>
+              ) : (
+                stats.ipRows.map((r) => (
+                  <tr key={r.ip} className="border-b border-hairline last:border-0">
+                    <td className="px-4 py-2.5 font-mono">{r.ip}</td>
+                    <td className="px-4 py-2.5 text-body">{fmtTime(r.lastActive)}</td>
+                    <td className="px-4 py-2.5 text-body">{r.pageviews}</td>
+                    <td className="px-4 py-2.5 text-body">{r.dids}</td>
+                    <td className="px-4 py-2.5 text-body">{r.aiGens}</td>
                   </tr>
                 ))
               )}
@@ -235,4 +283,10 @@ function Stat({ label, value, sub }: { label: string; value: number; sub?: strin
       {sub ? <p className="caption-sm mt-1 text-body">{sub}</p> : null}
     </div>
   );
+}
+
+function fmtTime(iso: string): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
 }

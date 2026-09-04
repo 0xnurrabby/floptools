@@ -33,7 +33,12 @@ async function recentDids(): Promise<Row[]> {
   const now = Date.now();
   if (didListCache && now - didListCache.at < CACHE_TTL) return didListCache.dids;
   const rows = (await safeQuery(
-    "SELECT did, ip, created_at FROM dids ORDER BY created_at DESC LIMIT 120",
+    `SELECT d.did, d.ip, d.created_at,
+            (SELECT MAX(a.created_at) FROM ai_generations a WHERE a.did = d.did) AS last_generation,
+            (SELECT MAX(t.created_at) FROM task_events t WHERE t.did = d.did) AS last_task,
+            (SELECT COUNT(*) FROM ai_generations a WHERE a.did = d.did) AS generations,
+            (SELECT COALESCE(SUM(a.total_tokens), 0) FROM ai_generations a WHERE a.did = d.did) AS tokens
+     FROM dids d ORDER BY d.created_at DESC LIMIT 120`,
   )) ?? [];
   didListCache = { at: now, dids: rows };
   return rows;
@@ -56,7 +61,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     });
   }
 
-  const [usersAll, users24, pvAll, pv24, didsAll, dids24, genAll, gen24, tokAll, tok24, genAllRows, didRows, recent] =
+  const [usersAll, users24, pvAll, pv24, didsAll, dids24, genAll, gen24, tokAll, tok24, genAllRows, didRows, recent, ipRows] =
     await Promise.all([
       counts("SELECT COUNT(DISTINCT ip) AS n FROM pageviews"),
       counts("SELECT COUNT(DISTINCT ip) AS n FROM pageviews WHERE created_at > now() - interval '24 hours'"),
@@ -73,6 +78,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       ),
       safeQuery("SELECT ip, COUNT(*) AS n FROM dids GROUP BY ip ORDER BY n DESC LIMIT 12"),
       safeQuery("SELECT ip, path, created_at FROM pageviews ORDER BY id DESC LIMIT 60"),
+      safeQuery(
+        `SELECT p.ip,
+                MAX(p.created_at) AS last_active,
+                COUNT(DISTINCT p.id) AS pageviews,
+                (SELECT COUNT(*) FROM dids d WHERE d.ip = p.ip) AS dids,
+                (SELECT COUNT(*) FROM ai_generations a WHERE a.ip = p.ip) AS ai_gens
+         FROM pageviews p GROUP BY p.ip ORDER BY last_active DESC LIMIT 60`,
+      ),
     ]);
 
   const gen = genAllRows?.[0] ?? {};
@@ -137,9 +150,24 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       did: String(d["did"]),
       ip: String(d["ip"] ?? "?"),
       createdAt: String(d["created_at"] ?? ""),
+      lastActive: String(
+        d["last_task"] ?? d["last_generation"] ?? d["created_at"] ?? "",
+      ),
+      generations: Number(d["generations"] ?? 0),
+      tokens: Number(d["tokens"] ?? 0),
       active: d.active === true,
     })),
-    topIps,
+    topIps: (topIps ?? []).map((t) => ({
+      ip: t.ip,
+      dids: Number(t.dids ?? 0),
+    })),
+    ipRows: (ipRows ?? []).map((r) => ({
+      ip: String(r["ip"] ?? "?"),
+      lastActive: String(r["last_active"] ?? ""),
+      pageviews: Number(r["pageviews"] ?? 0),
+      dids: Number(r["dids"] ?? 0),
+      aiGens: Number(r["ai_gens"] ?? 0),
+    })),
     recent: (recent ?? []).map((r) => ({
       ip: String(r["ip"] ?? "?"),
       path: String(r["path"] ?? "/"),
