@@ -53,10 +53,21 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       headers: { Accept: "application/json, text/plain;q=0.9" },
     });
   } catch {
-    return NextResponse.json(
-      { error: "upstream request failed" },
-      { status: 502 },
-    );
+    // The public instance is occasionally slow or drops a connection:
+    // one transparent retry before giving up.
+    try {
+      res = await fetch(upstream.toString(), {
+        method: "GET",
+        cache: "no-store",
+        signal: AbortSignal.timeout(40000),
+        headers: { Accept: "application/json, text/plain;q=0.9" },
+      });
+    } catch (secondError) {
+      return NextResponse.json(
+        { error: "upstream request failed", detail: (secondError as Error).message.slice(0, 200) },
+        { status: 502 },
+      );
+    }
   }
 
   const body = await res.text();

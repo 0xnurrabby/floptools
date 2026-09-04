@@ -159,8 +159,26 @@ export default function ActivityPage() {
       } else if (e instanceof TechnocoreError && e.status === 409) {
         setNoteResult({
           ok: false,
-          message: "A note already exists at that path (409):",
+          message: "A note already exists at that path (conflict). It is yours — publish as your key to replace it:",
           value: e.body.slice(0, 250),
+        });
+      } else if (e instanceof TechnocoreError) {
+        const isErrorJson = e.body.startsWith("{");
+        let excerpt = e.body.slice(0, 200);
+        if (isErrorJson) {
+          try {
+            const j = JSON.parse(e.body) as { error?: string };
+            excerpt = j.error ?? excerpt;
+          } catch {
+            /* keep raw excerpt */
+          }
+        }
+        setNoteResult({
+          ok: false,
+          message:
+            e.status === 502 || e.status === 0
+              ? `technocore.chat did not answer (temporary glitch). Nothing was published; your key is safe. Try again in a few seconds.${excerpt && !isErrorJson ? ` (${excerpt})` : ""}`
+              : `Technocore answered HTTP ${e.status}: ${excerpt}`,
         });
       } else {
         setNoteResult({ ok: false, message: (e as Error).message });
@@ -345,13 +363,24 @@ export default function ActivityPage() {
                     <pre className="mt-2 overflow-x-auto rounded-[8px] bg-surface-soft p-3 font-mono text-[13px] text-ink">{noteResult.value}</pre>
                   ) : null}
                   {!noteResult.ok ? (
-                    <Button
-                      variant="secondary"
-                      className="mt-3"
-                      onClick={() => publishNote({ mailbox: mailbox && includeMailbox ? mailbox : undefined, force: true })}
-                    >
-                      Overwrite
-                    </Button>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button
+                        variant="secondary"
+                        onClick={() =>
+                          publishNote({ mailbox: mailbox && includeMailbox ? mailbox : undefined })
+                        }
+                      >
+                        Try again
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() =>
+                          publishNote({ mailbox: mailbox && includeMailbox ? mailbox : undefined, force: true })
+                        }
+                      >
+                        Publish as my key (unconditional)
+                      </Button>
+                    </div>
                   ) : null}
                 </div>
               ) : null}
