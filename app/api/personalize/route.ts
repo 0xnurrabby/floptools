@@ -5,8 +5,10 @@ import {
   PERSONAS,
   type Persona,
 } from "@/lib/personalize";
-import { safeExec } from "@/lib/db";
+import { safeExec, safeQuery } from "@/lib/db";
 import { clientIp } from "@/lib/server-ip";
+import { AI_GEN_MAX_PER_DAY, MESSAGES } from "@/lib/limits";
+import { isValidDid } from "@/lib/didkey";
 
 /**
  * POST /api/personalize
@@ -83,9 +85,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  let body: { name?: string; persona?: string };
+  let body: { name?: string; persona?: string; did?: string };
   try {
-    body = (await req.json()) as { name?: string; persona?: string };
+    body = (await req.json()) as typeof body;
   } catch {
     return NextResponse.json({ error: "Invalid JSON body.", code: "bad_request" }, { status: 400 });
   }
@@ -96,6 +98,20 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     rawPersona === "surprise" || (PERSONAS as readonly string[]).includes(rawPersona)
       ? (rawPersona as Persona)
       : "surprise";
+  const did =
+    typeof body.did === "string" && isValidDid(body.did) ? body.did : undefined;
+
+  // Fair use: max 3 generations per identity per UTC day.
+  if (did) {
+    const rows = await safeQuery(
+      `SELECT COUNT(*) AS n FROM ai_generations WHERE did = $1 AND created_at > date_trunc('day', now())`,
+      [did],
+    );
+    const used = Number(rows?.[0]?.["n"] ?? 0);
+    if (used >= AI_GEN_MAX_PER_DAY) {
+      return NextResponse.json({ error: MESSAGES.ai_generate, code: "ai_limit" }, { status: 429 });
+    }
+  }
 
   const variation = Math.floor(Math.random() * 1_000_000);
   const { system, user } = buildPrompt({ name, persona, variation });
@@ -163,13 +179,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   // Record usage for the admin dashboard (best effort, never blocks).
   await safeExec(
-    "INSERT INTO ai_generations (ip, model, prompt_tokens, completion_tokens, total_tokens) VALUES ($1, $2, $3, $4, $5)",
+    "INSERT INTO ai_generations (ip, model, prompt_tokens, completion_tokens, total_tokens, did) VALUES ($1, $2, $3, $4, $5, $6)",
     [
       clientIp(req.headers),
       MODEL,
       Number(usage?.prompt_tokens ?? 0),
       Number(usage?.completion_tokens ?? 0),
       Number(usage?.total_tokens ?? 0),
+      did ?? null,
     ],
   );
 

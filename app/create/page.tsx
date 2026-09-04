@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import Link from "next/link";
 import { Button, Card, CopyButton, DidText, Field, Note, TextArea, TextInput, TerminalCard } from "@/components/ui";
+import { LimitModal } from "@/components/limit-modal";
 import { useSession } from "@/components/use-session";
 import {
   createIdentity,
@@ -30,6 +31,7 @@ export default function CreatePage() {
   const [busy, setBusy] = useState<"create" | "unlock" | "import" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [limitMessage, setLimitMessage] = useState<string | null>(null);
 
   const [pass, setPass] = useState("");
   const [pass2, setPass2] = useState("");
@@ -127,12 +129,39 @@ export default function CreatePage() {
       setError("Passphrases do not match.");
       return;
     }
+    // Fair use: precheck the IP cap before doing any local work.
     setBusy("create");
     try {
+      const pre = await fetch("/api/limits", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "did_create", commit: false }),
+      });
+      const preBody = (await pre.json()) as { ok: boolean; message?: string };
+      if (!pre.ok || !preBody.ok) {
+        setLimitMessage(preBody.message ?? "Identity creation limit reached.");
+        setBusy(null);
+        return;
+      }
+
       const { identity } = await createIdentity(pass);
+
+      // Record (double-checked server-side). Denied => lock and drop.
+      const commit = await fetch("/api/limits", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "did_create", did: identity.public.did, commit: true }),
+      });
+      const commitBody = (await commit.json()) as { ok: boolean; message?: string };
+      if (!commit.ok || !commitBody.ok) {
+        lock();
+        setLimitMessage(commitBody.message ?? "Identity creation limit reached.");
+        setBusy(null);
+        return;
+      }
+
       const filename = identityFilenameFor(identity.public.did);
       downloadFile(identity, filename);
-      void trackDid(identity.public.did, "create");
       if (keepInBrowser) {
         saveEncryptedIdentity(identity);
         setNotice(`Created ${identityShortName(identity.public.did)}. File downloaded (${filename}) and a copy is saved in this browser.`);
@@ -372,6 +401,10 @@ export default function CreatePage() {
         <strong className="font-medium text-ink">One identity forever.</strong> Next:{" "}
         <Link className="text-ink underline underline-offset-2" href="/sign">sign a message →</Link>
       </Note>
+
+      {limitMessage ? (
+        <LimitModal message={limitMessage} onClose={() => setLimitMessage(null)} />
+      ) : null}
     </div>
   );
 }

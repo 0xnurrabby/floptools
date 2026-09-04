@@ -34,11 +34,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     if (!did) {
       return NextResponse.json({ ok: false }, { status: 400 });
     }
-    const detail = typeof body.detail === "string" ? body.detail.slice(0, 80) : "create";
-    await safeExec(
-      "INSERT INTO dids (did, ip) VALUES ($1, $2) ON CONFLICT (did) DO UPDATE SET ip = EXCLUDED.ip WHERE dids.ip IS NULL",
-      [did, ip],
-    );
+    const detail = typeof body.detail === "string" ? body.detail.slice(0, 80) : "import";
+    // Imports and restores are unlimited: record the DID anonymously (no IP
+    // attribution), so they never count toward the per-IP creation cap.
+    await safeExec("INSERT INTO dids (did, ip) VALUES ($1, NULL) ON CONFLICT (did) DO NOTHING", [did]);
     await safeExec("INSERT INTO pageviews (ip, path) VALUES ($1, $2)", [ip, `did:${detail}`]);
   }
   return NextResponse.json({ ok: true });

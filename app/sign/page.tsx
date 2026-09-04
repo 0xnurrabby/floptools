@@ -18,6 +18,7 @@ import {
 } from "@/components/ui";
 import { useSession } from "@/components/use-session";
 import { signDraft, nonceStore } from "@/lib/keyring";
+import { LimitModal } from "@/components/limit-modal";
 import { getClient, TECHNOBASE } from "@/lib/client";
 import { TechnocoreError } from "@/lib/technocore";
 import { sweep } from "@/lib/sweep";
@@ -78,11 +79,13 @@ function SignComposer() {
     ROOMS.some((r) => r.value === prefillRoom) ? "" : prefillRoom,
   );
   const [text, setText] = useState(prefillText);
+  const taskCategory = (params.get("task") ?? "custom").toLowerCase().slice(0, 48);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<PublishResult | null>(null);
   const [ledgerCheck, setLedgerCheck] = useState<boolean | null>(null);
   const [didRetry, setDidRetry] = useState<string | null>(null);
+  const [limitMessage, setLimitMessage] = useState<string | null>(null);
   const receipts = useSyncExternalStore(
     subscribeReceipts,
     getReceiptsSnapshot,
@@ -117,6 +120,18 @@ function SignComposer() {
     }
     setBusy(true);
     try {
+      // Fair use: 2 of each activity task per identity per day (per server).
+      const limitRes = await fetch("/api/limits", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind: "task", did, category: taskCategory }),
+      });
+      const limitBody = (await limitRes.json()) as { ok: boolean; message?: string };
+      if (!limitRes.ok || !limitBody.ok) {
+        setLimitMessage(limitBody.message ?? "Task limit reached for today.");
+        setBusy(false);
+        return;
+      }
       const draft = signDraft(room, text);
       await doPublish(draft.did, room, draft.sweptText, draft.nonce, draft.sig, 0);
     } catch (e) {
@@ -327,6 +342,10 @@ function SignComposer() {
           )}
         </div>
       </section>
+
+      {limitMessage ? (
+        <LimitModal message={limitMessage} onClose={() => setLimitMessage(null)} />
+      ) : null}
     </div>
   );
 }

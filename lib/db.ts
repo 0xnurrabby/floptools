@@ -82,6 +82,15 @@ export async function ensureSchema(): Promise<void> {
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `);
+    await p.query(`ALTER TABLE ai_generations ADD COLUMN IF NOT EXISTS did TEXT`);
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS task_events (
+        id BIGSERIAL PRIMARY KEY,
+        did TEXT NOT NULL,
+        category TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
     schemaReady = true;
   })();
   await schemaPending;

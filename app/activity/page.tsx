@@ -13,6 +13,7 @@ import {
   TextInput,
   TerminalCard,
 } from "@/components/ui";
+import { LimitModal } from "@/components/limit-modal";
 import { useSession } from "@/components/use-session";
 import { didNoteValue } from "@/lib/keyring";
 import { getClient } from "@/lib/client";
@@ -72,6 +73,7 @@ export default function ActivityPage() {
   const [persona, setPersona] = useState<Persona>("surprise");
   const [genBusy, setGenBusy] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
+  const [limitMessage, setLimitMessage] = useState<string | null>(null);
   const ai = useSyncExternalStore(
     subscribeTemplates,
     () => getTemplatesSnapshot(),
@@ -89,14 +91,16 @@ export default function ActivityPage() {
       const res = await fetch("/api/personalize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim() || undefined, persona }),
+        body: JSON.stringify({ name: name.trim() || undefined, persona, did: did ?? undefined }),
       });
       const payload = (await res.json()) as
         | (GeneratedTemplates & { error?: string; code?: string })
         | { error?: string; code?: string };
       if (!res.ok || !payload || "error" in payload) {
         const err = (payload as { error?: string; code?: string }) ?? {};
-        if (err.code === "not_configured") {
+        if (res.status === 429 && err.code === "ai_limit") {
+          setLimitMessage(err.error ?? "AI limit reached for today.");
+        } else if (err.code === "not_configured") {
           setGenError(
             "AI Gateway is not configured on the server. Set AI_GATEWAY_API_KEY in the environment (server-side only) to enable unique check-ins.",
           );
@@ -151,8 +155,8 @@ export default function ActivityPage() {
     setIncludeMailbox(true);
   };
 
-  const linkTo = (room: string, text: string) =>
-    `/sign?room=${encodeURIComponent(room)}&text=${encodeURIComponent(text)}`;
+  const linkTo = (room: string, text: string, task: string) =>
+    `/sign?room=${encodeURIComponent(room)}&text=${encodeURIComponent(text)}&task=${encodeURIComponent(task)}`;
 
   return (
     <div className="mx-auto max-w-4xl px-4 pb-10 pt-12">
@@ -236,7 +240,7 @@ export default function ActivityPage() {
               </div>
               <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row">
                 <Link
-                  href={linkTo(SLOT_META[slot].room, text)}
+                  href={linkTo(SLOT_META[slot].room, text, slot)}
                   className="inline-flex h-11 w-full items-center justify-center rounded-full bg-ink px-5 text-sm font-medium text-on-primary hover:bg-ink-deep sm:h-9 sm:w-auto"
                 >
                   Use
@@ -334,6 +338,10 @@ export default function ActivityPage() {
           <span className="text-mute"># privacy: unguessable name · integrity: your signature</span>
         </TerminalCard>
       </section>
+
+      {limitMessage ? (
+        <LimitModal message={limitMessage} onClose={() => setLimitMessage(null)} />
+      ) : null}
     </div>
   );
 }
