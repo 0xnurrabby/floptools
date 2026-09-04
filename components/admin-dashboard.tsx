@@ -10,6 +10,14 @@ import {
   TerminalCard,
 } from "@/components/ui";
 
+interface IpGeo {
+  flag: string;
+  countryCode: string;
+  country: string;
+  region: string;
+  city: string;
+}
+
 interface Stats {
   dbError?: string;
   overview: {
@@ -29,9 +37,25 @@ interface Stats {
     activeDids: number;
     trackedDids: number;
   } | null;
-  dids: { did: string; ip: string; createdAt: string; lastActive: string; generations: number; tokens: number; active: boolean }[];
+  dids: {
+    did: string;
+    ip: string;
+    geo?: IpGeo | null;
+    createdAt: string;
+    lastActive: string;
+    generations: number;
+    tokens: number;
+    active: boolean;
+  }[];
   topIps: { ip: string; dids: number }[];
-  ipRows: { ip: string; lastActive: string; pageviews: number; dids: number; aiGens: number }[];
+  ipRows: {
+    ip: string;
+    lastActive: string;
+    pageviews: number;
+    dids: number;
+    aiGens: number;
+    geo?: IpGeo | null;
+  }[];
   recent: { ip: string; path: string; createdAt: string }[];
 }
 
@@ -185,7 +209,11 @@ export function AdminDashboard() {
                 stats.dids.map((d) => (
                   <tr key={d.did} className="border-b border-hairline last:border-0">
                     <td className="max-w-72 break-all px-4 py-2.5 font-mono">{d.did}</td>
-                    <td className="px-4 py-2.5 text-body">{d.ip}</td>
+                    <td className="px-4 py-2.5">
+                      <span className="flex w-max max-w-full items-center gap-1.5">
+                        <GeoText ip={d.ip} geo={d.geo} />
+                      </span>
+                    </td>
                     <td className="px-4 py-2.5 text-body">{fmtTime(d.createdAt)}</td>
                     <td className="px-4 py-2.5 text-body">{fmtTime(d.lastActive)}</td>
                     <td className="px-4 py-2.5 text-body">{d.generations}</td>
@@ -214,6 +242,7 @@ export function AdminDashboard() {
             <thead>
               <tr className="border-b border-hairline bg-surface-soft">
                 <th className="px-4 py-2.5 font-medium text-mute">IP</th>
+                <th className="px-4 py-2.5 font-medium text-mute">Location</th>
                 <th className="px-4 py-2.5 font-medium text-mute">Last active</th>
                 <th className="px-4 py-2.5 font-medium text-mute">Views</th>
                 <th className="px-4 py-2.5 font-medium text-mute">DIDs</th>
@@ -223,12 +252,15 @@ export function AdminDashboard() {
             <tbody>
               {stats.ipRows.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-mute">No visits recorded yet.</td>
+                  <td colSpan={6} className="px-4 py-6 text-center text-mute">No visits recorded yet.</td>
                 </tr>
               ) : (
                 stats.ipRows.map((r) => (
                   <tr key={r.ip} className="border-b border-hairline last:border-0">
                     <td className="px-4 py-2.5 font-mono">{r.ip}</td>
+                    <td className="px-4 py-2.5">
+                      <GeoText ip={r.ip} geo={r.geo} />
+                    </td>
                     <td className="px-4 py-2.5 text-body">{fmtTime(r.lastActive)}</td>
                     <td className="px-4 py-2.5 text-body">{r.pageviews}</td>
                     <td className="px-4 py-2.5 text-body">{r.dids}</td>
@@ -289,4 +321,18 @@ function fmtTime(iso: string): string {
   if (!iso) return "—";
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
+}
+
+function GeoText({ ip, geo }: { ip: string; geo?: IpGeo | null }) {
+  if (geo?.countryCode) {
+    const place = [geo.city, geo.region].filter(Boolean).join(", ");
+    return (
+      <span className="min-w-0" title={`${geo.country}${place ? ` · ${place}` : ""}`}>
+        <span className="mr-1.5">{geo.flag}</span>
+        <span className="text-body">{geo.country}</span>
+        {place ? <span className="caption-sm text-mute"> · {place.slice(0, 40)}</span> : null}
+      </span>
+    );
+  }
+  return <span className="text-mute">{ip}</span>;
 }

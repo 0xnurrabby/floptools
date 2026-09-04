@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ADMIN_COOKIE, verifySessionToken } from "@/lib/admin-auth";
 import { safeQuery, dbHealthy, lastDbError, type Row } from "@/lib/db";
+import { geoForMany } from "@/lib/ip-geo";
 import { TechnocoreClient } from "@/lib/technocore";
 import { didNotePaths } from "@/lib/didkey";
 
@@ -127,6 +128,19 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   const activeCount = checked.filter((d) => d.active === true).length;
 
+  // Location enrichment (cached in DB, so steady-state refresh = zero lookups).
+  const geoMap = await geoForMany(
+    (ipRows ?? [])
+      .map((r) => String(r["ip"] ?? ""))
+      .concat(checked.map((d) => String(d["ip"] ?? ""))),
+  );
+  const geoFor = (ip: string) => {
+    const g = geoMap.get(ip);
+    return g
+      ? { flag: g.flag, countryCode: g.countryCode, country: g.country, region: g.region, city: g.city }
+      : null;
+  };
+
   return NextResponse.json({
     ok: true,
     overview: {
@@ -149,6 +163,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     dids: checked.map((d) => ({
       did: String(d["did"]),
       ip: String(d["ip"] ?? "?"),
+      geo: geoFor(String(d["ip"] ?? "")),
       createdAt: String(d["created_at"] ?? ""),
       lastActive: String(
         d["last_task"] ?? d["last_generation"] ?? d["created_at"] ?? "",
@@ -167,6 +182,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       pageviews: Number(r["pageviews"] ?? 0),
       dids: Number(r["dids"] ?? 0),
       aiGens: Number(r["ai_gens"] ?? 0),
+      geo: geoFor(String(r["ip"] ?? "")),
     })),
     recent: (recent ?? []).map((r) => ({
       ip: String(r["ip"] ?? "?"),

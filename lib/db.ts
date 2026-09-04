@@ -116,6 +116,16 @@ export async function ensureSchema(): Promise<void> {
     await p.query(`CREATE INDEX IF NOT EXISTS idx_tc_frames_did ON trustcore_frames (did)`);
     await p.query(`CREATE INDEX IF NOT EXISTS idx_tc_frames_contract ON trustcore_frames (contract_id)`);
     await p.query(`CREATE INDEX IF NOT EXISTS idx_tc_frames_created ON trustcore_frames (created_at)`);
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS ip_geo (
+        ip TEXT PRIMARY KEY,
+        country TEXT,
+        country_code TEXT,
+        region TEXT,
+        city TEXT,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
     schemaReady = true;
   })();
   await schemaPending;
