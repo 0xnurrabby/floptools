@@ -5,6 +5,8 @@ import {
   PERSONAS,
   type Persona,
 } from "@/lib/personalize";
+import { safeExec } from "@/lib/db";
+import { clientIp } from "@/lib/server-ip";
 
 /**
  * POST /api/personalize
@@ -139,14 +141,30 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   let content = "";
+  let usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined;
   try {
     const payload = JSON.parse(text) as {
       choices?: { message?: { content?: string } }[];
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
     };
     content = payload.choices?.[0]?.message?.content ?? "";
+    usage = payload.usage;
   } catch {
     /* fall through */
   }
+
+  // Record usage for the admin dashboard (best effort, never blocks).
+  await safeExec(
+    "INSERT INTO ai_generations (ip, model, prompt_tokens, completion_tokens, total_tokens) VALUES ($1, $2, $3, $4, $5)",
+    [
+      clientIp(req.headers),
+      MODEL,
+      Number(usage?.prompt_tokens ?? 0),
+      Number(usage?.completion_tokens ?? 0),
+      Number(usage?.total_tokens ?? 0),
+    ],
+  );
+
   if (!content) {
     return NextResponse.json(
       { error: "AI Gateway returned an empty completion.", code: "empty_completion" },

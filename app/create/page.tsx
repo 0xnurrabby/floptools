@@ -91,6 +91,7 @@ export default function CreatePage() {
         await unlockFromFile(file, importNewPass);
         saveEncryptedIdentity(file);
         downloadFile(file, SOURCE_IMPORT_FILENAME);
+        void trackDid(resolved.did, "import");
         setNotice(
           `Imported and re-encrypted. Downloaded as ${SOURCE_IMPORT_FILENAME}; a copy is saved in this browser.`,
         );
@@ -99,6 +100,7 @@ export default function CreatePage() {
         const file = JSON.parse(importText) as IdentityFile;
         await unlockFromFile(file, importSourcePass);
         saveEncryptedIdentity(file);
+        void trackDid(file.public.did, "restore");
         setNotice("Identity unlocked and its encrypted copy is saved in this browser.");
       }
       setImportText("");
@@ -127,6 +129,7 @@ export default function CreatePage() {
     try {
       const { identity } = await createIdentity(pass);
       downloadFile(identity, SOURCE_IMPORT_FILENAME);
+      void trackDid(identity.public.did, "create");
       if (keepInBrowser) {
         saveEncryptedIdentity(identity);
         setNotice("Created. A copy is saved in this browser (encrypted).");
@@ -378,4 +381,12 @@ function downloadFile(file: unknown, name: string): void {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+function trackDid(did: string, detail: string): void {
+  void fetch("/api/track", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: "did_created", did, detail }),
+  }).catch(() => undefined);
 }
