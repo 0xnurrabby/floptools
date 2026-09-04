@@ -20,6 +20,16 @@ export const MIN_PASSPHRASE_LENGTH = 12;
 export const KDF_ITERATIONS = 310000;
 export const DEFAULT_IDENTITY_FILENAME = "identity.json";
 
+/** Human-friendly identity name: identity_<last 4 chars of the DID>. */
+export function identityShortName(did: string): string {
+  const tail = did.length >= 4 ? did.slice(-4) : did;
+  return `identity_${tail}`;
+}
+
+export function identityFilenameFor(did: string): string {
+  return `${identityShortName(did)}.json`;
+}
+
 export interface IdentityPublic {
   did: string;
   rawPublicKey: string;

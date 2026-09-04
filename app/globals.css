@@ -197,6 +197,37 @@ pre,
   word-break: break-all;
 }
 
+/* Live-dot pulse for the signed-in banner */
+@keyframes flop-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.8);
+  }
+}
+.pulse-dot {
+  animation: flop-pulse 1.6s ease-in-out infinite;
+}
+
+/* Banner entrance */
+@keyframes flop-banner-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.banner-in {
+  animation: flop-banner-in 0.35s ease-out both;
+}
+
 /* Reduce motion */
 @media (prefers-reduced-motion: reduce) {
   html {

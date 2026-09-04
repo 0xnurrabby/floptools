@@ -8,6 +8,7 @@ import {
   getStoredIdentitySnapshot,
   subscribeStoredIdentity,
 } from "@/lib/keyring";
+import { identityShortName } from "@/lib/identity";
 
 /**
  * Inline unlock for an identity copy saved in this browser (encrypted).
@@ -46,7 +47,8 @@ export function UnlockIdentity() {
     <Card className="mb-6">
       <h2 className="heading-md">Identity found in this browser</h2>
       <p className="caption-sm mt-1 text-body">
-        An encrypted copy is stored here · unlock with your passphrase. The key
+        <span className="font-mono font-medium text-ink">{identityShortName(stored.public.did)}</span>
+        {" "}is stored here (encrypted). Unlock with your passphrase; the key
         stays in memory only, so a reload asks again.
       </p>
       <div className="mt-4 flex flex-col gap-3 sm:flex-row">

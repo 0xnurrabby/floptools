@@ -14,10 +14,11 @@ import {
 import {
   MIN_PASSPHRASE_LENGTH,
   encryptIdentity,
+  identityShortName,
+  identityFilenameFor,
   type IdentityFile,
 } from "@/lib/identity";
 import {
-  SOURCE_IMPORT_FILENAME,
   resolveImport,
   detectImport,
   type DetectedImport,
@@ -90,10 +91,11 @@ export default function CreatePage() {
         );
         await unlockFromFile(file, importNewPass);
         saveEncryptedIdentity(file);
-        downloadFile(file, SOURCE_IMPORT_FILENAME);
+        const filename = identityFilenameFor(resolved.did);
+        downloadFile(file, filename);
         void trackDid(resolved.did, "import");
         setNotice(
-          `Imported and re-encrypted. Downloaded as ${SOURCE_IMPORT_FILENAME}; a copy is saved in this browser.`,
+          `Imported and re-encrypted. Downloaded as ${filename}; a copy is saved in this browser.`,
         );
       } else {
         // floptools encrypted: reuse the already-decrypted result
@@ -101,7 +103,7 @@ export default function CreatePage() {
         await unlockFromFile(file, importSourcePass);
         saveEncryptedIdentity(file);
         void trackDid(file.public.did, "restore");
-        setNotice("Identity unlocked and its encrypted copy is saved in this browser.");
+        setNotice(`Unlocked as ${identityShortName(file.public.did)}. Encrypted copy saved in this browser.`);
       }
       setImportText("");
       setImportDetected(null);
@@ -128,13 +130,14 @@ export default function CreatePage() {
     setBusy("create");
     try {
       const { identity } = await createIdentity(pass);
-      downloadFile(identity, SOURCE_IMPORT_FILENAME);
+      const filename = identityFilenameFor(identity.public.did);
+      downloadFile(identity, filename);
       void trackDid(identity.public.did, "create");
       if (keepInBrowser) {
         saveEncryptedIdentity(identity);
-        setNotice("Created. A copy is saved in this browser (encrypted).");
+        setNotice(`Created ${identityShortName(identity.public.did)}. File downloaded (${filename}) and a copy is saved in this browser.`);
       } else {
-        setNotice("Created. Keep the file and passphrase: they are the only way back.");
+        setNotice(`Created ${identityShortName(identity.public.did)}. Keep the file and passphrase: they are the only way back.`);
       }
     } catch (e) {
       setError((e as Error).message);
@@ -150,7 +153,7 @@ export default function CreatePage() {
 
   const redownload = () => {
     const file = getLastIdentityFile();
-    if (file) downloadFile(file, SOURCE_IMPORT_FILENAME);
+    if (file) downloadFile(file, identityFilenameFor(file.public.did));
   };
 
   const setText = (value: string) => setImportText(value);
@@ -315,8 +318,9 @@ export default function CreatePage() {
         <Card className="mt-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
-              <p className="caption-sm text-mute">
-                Unlocked{createdAt ? ` · since ${new Date(createdAt).toLocaleDateString()}` : ""}
+              <p className="font-mono text-[15px] font-medium text-ink">{identityShortName(did)}</p>
+              <p className="caption-sm mt-0.5 text-mute">
+                Unlocked in this session{createdAt ? ` · created ${new Date(createdAt).toLocaleDateString()}` : ""}
               </p>
               <div className="mt-1">
                 <DidText did={did} prefixChars={24} suffixChars={8} />

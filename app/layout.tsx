@@ -4,6 +4,7 @@ import "./globals.css";
 import { Nav } from "@/components/nav";
 import { Footer } from "@/components/footer";
 import { PageTracker } from "@/components/page-tracker";
+import { SessionBanner } from "@/components/session-banner";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -45,6 +46,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     >
       <body className="flex min-h-full flex-col">
         <Nav />
+        <SessionBanner />
         <main className="flex-1">{children}</main>
         <Footer />
         <PageTracker />
