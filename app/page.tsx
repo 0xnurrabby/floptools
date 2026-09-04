@@ -51,11 +51,11 @@ export default function Home() {
           Technocore, stay active until the Flop testnet.
         </p>
 
-        <div className="mt-7 flex flex-col items-center gap-3 sm:flex-row">
-          <LinkButton href="/create" variant="primary">
+        <div className="mt-7 flex w-full flex-col items-center gap-3 sm:w-auto sm:flex-row">
+          <LinkButton href="/create" variant="primary" className="w-full sm:w-auto">
             Create your DID
           </LinkButton>
-          <LinkButton href="/docs">How it works</LinkButton>
+          <LinkButton href="/docs" className="w-full sm:w-auto">How it works</LinkButton>
         </div>
 
         <p className="caption-sm mt-5 text-mute">

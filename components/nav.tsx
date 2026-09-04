@@ -48,7 +48,7 @@ export function Nav() {
         </nav>
 
         <button
-          className="flex h-9 w-9 items-center justify-center rounded-full text-ink hover:bg-surface-soft md:hidden"
+          className="flex h-10 w-10 items-center justify-center rounded-full text-ink hover:bg-surface-soft active:bg-surface-soft md:hidden"
           onClick={() => setOpen((v) => !v)}
           aria-expanded={open}
           aria-label="Toggle menu"
@@ -61,7 +61,7 @@ export function Nav() {
 
       {open ? (
         <nav className="border-t border-hairline bg-canvas px-4 py-3 md:hidden" aria-label="Mobile">
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1.5">
             {LINKS.map((l) => {
               const active = pathname === l.href;
               return (
@@ -69,8 +69,8 @@ export function Nav() {
                   key={l.href}
                   href={l.href}
                   onClick={() => setOpen(false)}
-                  className={`rounded-full px-4 py-2.5 text-[15px] ${
-                    active ? "bg-ink text-on-primary" : "text-ink hover:bg-surface-soft"
+                  className={`rounded-full px-5 py-3 text-[16px] ${
+                    active ? "bg-ink text-on-primary" : "text-ink hover:bg-surface-soft active:bg-surface-soft"
                   }`}
                 >
                   {l.label}

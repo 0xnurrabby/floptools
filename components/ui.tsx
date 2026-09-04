@@ -18,7 +18,7 @@ export function Button({
   ...rest
 }: ButtonProps) {
   const base =
-    "inline-flex items-center justify-center gap-2 rounded-full px-5 h-9 text-sm font-medium select-none transition-colors disabled:cursor-not-allowed disabled:bg-surface-soft disabled:text-mute disabled:border-transparent";
+    "inline-flex items-center justify-center gap-2 rounded-full px-5 h-11 sm:h-9 text-sm font-medium select-none transition-colors disabled:cursor-not-allowed disabled:bg-surface-soft disabled:text-mute disabled:border-transparent";
   const styles: Record<ButtonVariant, string> = {
     primary:
       "bg-ink text-on-primary hover:bg-ink-deep active:bg-ink-deep disabled:bg-surface-soft",
@@ -46,7 +46,7 @@ export function LinkButton({
   children: ReactNode;
 }) {
   const base =
-    "inline-flex items-center justify-center gap-2 rounded-full px-5 h-9 text-sm font-medium no-underline transition-colors";
+    "inline-flex items-center justify-center gap-2 rounded-full px-5 h-11 sm:h-9 text-sm font-medium no-underline transition-colors";
   const styles: Record<ButtonVariant, string> = {
     primary: "bg-ink text-on-primary hover:bg-ink-deep",
     secondary:
@@ -70,7 +70,7 @@ export function TextInput({
 }: React.InputHTMLAttributes<HTMLInputElement> & { mono?: boolean }) {
   return (
     <input
-      className={`h-10 w-full rounded-full border border-hairline bg-canvas px-4 text-[15px] text-ink placeholder:text-mute focus:border-ink focus:outline-none ${mono ? "font-mono" : ""} ${className}`}
+      className={`h-11 w-full rounded-full border border-hairline bg-canvas px-4 text-base text-ink placeholder:text-mute focus:border-ink focus:outline-none sm:h-10 sm:text-[15px] ${mono ? "font-mono" : ""} ${className}`}
       {...rest}
     />
   );
@@ -88,7 +88,7 @@ export function TextArea({
   return (
     <textarea
       rows={rows}
-      className={`w-full rounded-[12px] border border-hairline bg-canvas px-4 py-3 text-[15px] text-ink placeholder:text-mute focus:border-ink focus:outline-none resize-y ${mono ? "font-mono" : ""} ${className}`}
+      className={`min-h-28 w-full rounded-[12px] border border-hairline bg-canvas px-4 py-3 text-base text-ink placeholder:text-mute focus:border-ink focus:outline-none resize-y sm:text-[15px] ${mono ? "font-mono" : ""} ${className}`}
       {...rest}
     />
   );
@@ -101,7 +101,7 @@ export function Select({
 }: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select
-      className={`h-10 w-full cursor-pointer rounded-full border border-hairline bg-canvas px-4 text-[15px] text-ink focus:border-ink focus:outline-none ${className}`}
+      className={`h-11 w-full cursor-pointer rounded-full border border-hairline bg-canvas px-4 text-base text-ink focus:border-ink focus:outline-none sm:h-10 sm:text-[15px] ${className}`}
       {...rest}
     >
       {children}
@@ -140,7 +140,7 @@ export function Card({
 }) {
   return (
     <div
-      className={`rounded-[12px] border p-6 ${
+      className={`rounded-[12px] border p-5 sm:p-6 ${
         dark
           ? "border-transparent bg-surface-dark text-on-dark"
           : "border-hairline bg-surface-card"
@@ -204,7 +204,7 @@ export function CopyButton({
   return (
     <button
       type="button"
-      className={`inline-flex h-9 items-center gap-1.5 rounded-full border border-hairline-strong bg-canvas px-4 text-sm font-medium text-ink transition-colors hover:bg-surface-soft ${className}`}
+      className={`inline-flex h-11 items-center justify-center gap-1.5 rounded-full border border-hairline-strong bg-canvas px-4 text-sm font-medium text-ink transition-colors hover:bg-surface-soft sm:h-9 ${className}`}
       onClick={() => {
         void navigator.clipboard.writeText(value).then(() => {
           setCopied(true);

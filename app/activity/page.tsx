@@ -188,12 +188,12 @@ export default function ActivityPage() {
                 </Select>
               </Field>
             </div>
-            <div className="flex flex-wrap items-center gap-3">
-              <Button onClick={generate} disabled={genBusy}>
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+              <Button onClick={generate} disabled={genBusy} className="w-full sm:w-auto">
                 {genBusy ? <Spinner label="Generating…" /> : ai ? "Regenerate" : "Generate unique set"}
               </Button>
               {ai ? (
-                <>
+                <div className="flex flex-wrap items-center gap-2">
                   <span className="body-sm-strong text-ink">{ai.personaTitle}</span>
                   {ai.name ? <span className="caption-sm text-body">for {ai.name}</span> : null}
                   <span className="caption-sm text-mute">generated {new Date(ai.generatedAt).toLocaleString()}</span>
@@ -206,7 +206,7 @@ export default function ActivityPage() {
                   >
                     use defaults
                   </button>
-                </>
+                </div>
               ) : null}
             </div>
             {genError ? <Note tone="error">{genError}</Note> : null}
@@ -234,14 +234,14 @@ export default function ActivityPage() {
                 </div>
                 <p className="body-sm mt-1 text-body">{text}</p>
               </div>
-              <div className="flex shrink-0 gap-2">
+              <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row">
                 <Link
                   href={linkTo(text)}
-                  className="inline-flex h-9 items-center rounded-full bg-ink px-5 text-sm font-medium text-on-primary hover:bg-ink-deep"
+                  className="inline-flex h-11 w-full items-center justify-center rounded-full bg-ink px-5 text-sm font-medium text-on-primary hover:bg-ink-deep sm:h-9 sm:w-auto"
                 >
                   Use
                 </Link>
-                <CopyButton value={text} label="Copy" />
+                <CopyButton value={text} label="Copy" className="w-full sm:w-auto" />
               </div>
             </div>
           ))}

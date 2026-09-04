@@ -110,7 +110,7 @@ export default function CheckPage() {
               if (e.key === "Enter") void run();
             }}
           />
-          <Button onClick={run} disabled={busy || !did.trim()} className="shrink-0">
+          <Button onClick={run} disabled={busy || !did.trim()} className="shrink-0 sm:w-auto">
             {busy ? <Spinner label="Checking…" /> : "Check"}
           </Button>
         </div>
@@ -216,9 +216,9 @@ export default function CheckPage() {
               {"\n"}
               curl -s &apos;{TECHNOBASE}/r/lobby?limit=200&format=json&apos;
             </TerminalCard>
-            <div className="mt-3 flex gap-2">
-              <CopyButton value={`curl -s '${TECHNOBASE}/kv/${result.notePath}'`} label="Copy note curl" />
-              <CopyButton value={`curl -s '${TECHNOBASE}/r/lobby?limit=200&format=json'`} label="Copy room curl" />
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+              <CopyButton value={`curl -s '${TECHNOBASE}/kv/${result.notePath}'`} label="Copy note curl" className="w-full sm:w-auto" />
+              <CopyButton value={`curl -s '${TECHNOBASE}/r/lobby?limit=200&format=json'`} label="Copy room curl" className="w-full sm:w-auto" />
             </div>
           </div>
 
@@ -241,7 +241,7 @@ export default function CheckPage() {
             <TextInput value={recSeq} onChange={(e) => setRecSeq(e.target.value)} placeholder="21414442" mono />
           </Field>
           <div className="flex items-end">
-            <Button onClick={verifyRecordNow} disabled={recBusy}>
+            <Button onClick={verifyRecordNow} disabled={recBusy} className="w-full sm:w-auto">
               {recBusy ? <Spinner label="…" /> : "Verify"}
             </Button>
           </div>

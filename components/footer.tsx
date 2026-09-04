@@ -1,6 +1,6 @@
 export function Footer() {
   return (
-    <footer className="mt-24 border-t border-hairline bg-canvas px-4 py-6">
+    <footer className="mt-24 border-t border-hairline bg-canvas px-4 pt-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
       <div className="mx-auto flex max-w-4xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="caption-sm text-body">
           Unofficial community tool for{" "}

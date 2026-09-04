@@ -376,12 +376,12 @@ function ReceiptRow({ receipt }: { receipt: Receipt }) {
           </div>
           <p className="mt-1.5 truncate font-mono text-[13px] text-body">{receipt.text}</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" onClick={verifyNow} disabled={verifyBusy}>
+        <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row">
+          <Button variant="secondary" onClick={verifyNow} disabled={verifyBusy} className="w-full sm:w-auto">
             {verifyBusy ? <Spinner label="…" /> : "Verify"}
           </Button>
           <button
-            className="body-sm rounded-full px-3 py-2 text-ink hover:bg-surface-soft"
+            className="body-sm w-full rounded-full bg-surface-soft px-3 py-2.5 text-ink hover:bg-hairline sm:w-auto"
             onClick={() => setExpanded((v) => !v)}
             aria-expanded={expanded}
           >
