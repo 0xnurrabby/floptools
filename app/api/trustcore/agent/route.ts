@@ -1,9 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ingestIfStale } from "@/lib/trustcore-ingest";
+import { ingestNow, isStale } from "@/lib/trustcore-ingest";
+import { safeQuery } from "@/lib/db";
 import { framesForDid } from "@/lib/trustcore-db";
 import { computeAgentMetrics, NEUTRAL_SCORE, TIER_LABEL } from "@/lib/trustscore";
 import { buildDealStates } from "@/lib/trustscore";
 import { isValidDid, publicKeyFromDid } from "@/lib/didkey";
+
+async function safeQueryFrameCount(): Promise<number> {
+  const rows = (await safeQuery("SELECT COUNT(*) AS n FROM trustcore_frames")) ?? [];
+  return Number(rows[0]?.["n"] ?? 0);
+}
 
 /**
  * GET /api/trustcore/agent?did=did:key:z6Mk…
@@ -17,7 +23,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "invalid did:key" }, { status: 400 });
   }
 
-  const ingested = await ingestIfStale();
+  // Fast paint: never block on a cold scan; kick it off and report scanning.
+  const counters = (await safeQueryFrameCount()) ?? 0;
+  const scanning = counters === 0 && isStale();
+  if (scanning) void ingestNow();
+
   const frames = await framesForDid(did);
   const metrics = computeAgentMetrics(did, frames);
 
@@ -47,7 +57,8 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     tierLabel: TIER_LABEL[frames.length === 0 ? "unknown" : metrics.tier],
     metrics,
     deals,
-    scanned: { cached: ingested.cached, error: ingested.error ?? null },
+    scanning,
+    scanned: { error: null },
     ledgerCheck: { validDid: true, pubKeyBytes: publicKeyFromDid(did).length },
   });
 }

@@ -52,37 +52,45 @@ export async function ingestNow(): Promise<{ ok: boolean; frames: number; error?
         }
       }
 
+      // Batch insert: one round-trip per 150 frames instead of one per frame.
       let stored = 0;
-      for (const f of frames) {
+      for (let i = 0; i < frames.length; i += 150) {
+        const chunk = frames.slice(i, i + 150);
+        const values: unknown[] = [];
+        const placeholders = chunk.map((_, j) => {
+          const b = j * 17;
+          values.push(
+            chunk[j].hash,
+            chunk[j].room,
+            chunk[j].seq,
+            chunk[j].did,
+            chunk[j].type,
+            chunk[j].contractId ?? null,
+            chunk[j].offerId ?? null,
+            chunk[j].ref ?? null,
+            chunk[j].amount ?? null,
+            chunk[j].asset ?? null,
+            chunk[j].role ?? null,
+            chunk[j].outcome ?? null,
+            chunk[j].rail ?? null,
+            chunk[j].lockKind ?? null,
+            null,
+            chunk[j].ts,
+            chunk[j].rawText,
+          );
+          return `($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7},$${b + 8},$${b + 9},$${b + 10},$${b + 11},$${b + 12},$${b + 13},$${b + 14},$${b + 15},$${b + 16},$${b + 17})`;
+        });
         try {
           await safeExec(
             `INSERT INTO trustcore_frames
                (hash, room, seq, did, frame_type, contract_id, offer_id, ref, amount, asset, role, outcome, rail, lock_kind, nonce, ts, raw_text)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+             VALUES ${placeholders.join(",")}
              ON CONFLICT (hash) DO NOTHING`,
-            [
-              f.hash,
-              f.room,
-              f.seq,
-              f.did,
-              f.type,
-              f.contractId ?? null,
-              f.offerId ?? null,
-              f.ref ?? null,
-              f.amount ?? null,
-              f.asset ?? null,
-              f.role ?? null,
-              f.outcome ?? null,
-              f.rail ?? null,
-              f.lockKind ?? null,
-              null,
-              f.ts,
-              f.rawText,
-            ],
+            values,
           );
-          stored++;
+          stored += chunk.length;
         } catch {
-          /* ignore single-row failures */
+          /* chunk failed — skip */
         }
       }
       lastIngest = Date.now();
@@ -106,4 +114,8 @@ export async function ingestIfStale(): Promise<{ ok: boolean; frames: number; er
   }
   const res = await ingestNow();
   return { ...res, cached: false };
+}
+
+export function isStale(): boolean {
+  return Date.now() - lastIngest >= STALE_AFTER_MS;
 }

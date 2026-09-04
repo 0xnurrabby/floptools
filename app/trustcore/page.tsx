@@ -42,41 +42,55 @@ export default function TrustcorePage() {
 
   useEffect(() => {
     let cancelled = false;
+    let scans = 0;
+    let t: ReturnType<typeof setTimeout> | undefined;
     const load = async () => {
       try {
         const res = await fetch("/api/trustcore/leaderboard?limit=25", { cache: "no-store" });
         if (!res.ok) throw new Error(String(res.status));
         const data = (await res.json()) as {
           ok: boolean;
+          scanning?: boolean;
           board: AgentRow[];
           counters: { frames: number; agents: number; contracts: number };
-          scanned: { error?: string | null };
         };
         if (cancelled) return;
         setBoard(data.board ?? []);
         setCounters(data.counters ?? null);
-        if (data.scanned?.error) setScanNote(`Live scan issue: ${data.scanned.error}`);
         setBoardPhase("ready");
+        setScanNote(
+          data.scanning ? "First scan is running — data usually lands within ~10s. Watching…" : null,
+        );
       } catch {
         if (!cancelled) setBoardPhase("error");
       }
     };
-    void load();
-    // live-ish: refresh feed a little while page is open
     const feed = async () => {
       try {
         const r = await fetch("/api/trustcore/leaderboard?kind=activity&limit=20", { cache: "no-store" });
         if (!r.ok) return;
-        const d = (await r.json()) as { ok: boolean; frames?: ActivityRow[] };
+        const d = (await r.json()) as { ok: boolean; scanning?: boolean; frames?: ActivityRow[] };
         if (!cancelled && d.frames) setActivity(d.frames);
+        if (!cancelled && d.scanning) {
+          setScanNote("First scan is running — data usually lands within ~10s. Watching…");
+        }
       } catch {
         /* ignore */
       }
     };
-    const t = setInterval(() => void feed(), 25_000);
+    // cook-style: poll fast while the first scan runs, calm afterwards
+    const loop = async () => {
+      if (cancelled) return;
+      scans++;
+      if (scans <= 6) await load();
+      await feed();
+      if (cancelled) return;
+      t = setTimeout(() => void loop(), scans <= 6 ? 4000 : 25_000);
+    };
+    void loop();
     return () => {
       cancelled = true;
-      clearInterval(t);
+      if (t) clearTimeout(t);
     };
   }, []);
 

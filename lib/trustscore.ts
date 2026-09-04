@@ -175,6 +175,12 @@ export function buildDealStates(frames: TclkFrame[]): { states: DealState[]; off
 /** Derive agent metrics from frames (both sides of every deal count). */
 export function computeAgentMetrics(did: string, frames: TclkFrame[]): AgentMetrics {
   const { states } = buildDealStates(frames);
+  const offerCount = frames.filter((f) => f.type === "offer" && f.did === did).length;
+  return metricsFromStates(did, states, offerCount);
+}
+
+/** Aggregate a single agent's metrics from already-built deal states. */
+export function metricsFromStates(did: string, states: DealState[], offerCount = 0): AgentMetrics {
 
   let deals = 0;
   let completed = 0;
@@ -256,7 +262,7 @@ export function computeAgentMetrics(did: string, frames: TclkFrame[]): AgentMetr
   score += speedBonus + volumeBonus;
 
   const highOfferRate = (() => {
-    if (frames.filter((f) => f.type === "offer" && f.did === did).length < 12) return false;
+    if (offerCount < 12) return false;
     return completed === 0 && refunded === 0;
   })();
 

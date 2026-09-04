@@ -2,7 +2,8 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { Card, CopyButton, Note, StatusChip, TerminalCard } from "@/components/ui";
-import { ingestIfStale } from "@/lib/trustcore-ingest";
+import { isStale, ingestNow } from "@/lib/trustcore-ingest";
+import { safeQuery } from "@/lib/db";
 import { framesForDid } from "@/lib/trustcore-db";
 import { computeAgentMetrics, buildDealStates, TIER_LABEL, NEUTRAL_SCORE } from "@/lib/trustscore";
 import { isValidDid } from "@/lib/didkey";
@@ -20,7 +21,12 @@ export default async function AgentProfilePage({ params }: { params: Promise<{ d
   }
   if (!isValidDid(did)) notFound();
 
-  const scan = await ingestIfStale();
+  // Fast paint: never block on a cold scan; kick it off and say so.
+  const frameCountRows = (await safeQuery("SELECT COUNT(*) AS n FROM trustcore_frames")) ?? [];
+  const frameCount = Number(frameCountRows[0]?.["n"] ?? 0);
+  const scanning = frameCount === 0 && isStale();
+  if (scanning) void ingestNow();
+
   const frames = await framesForDid(did);
   const metrics = computeAgentMetrics(did, frames);
   const { states } = buildDealStates(frames);
@@ -141,8 +147,13 @@ export default async function AgentProfilePage({ params }: { params: Promise<{ d
           {"\n"}
           curl -s &apos;https://technocore.chat/r/tclk-offers/export&apos;
         </TerminalCard>
-        {scan.error ? (
-          <div className="mt-3"><Note tone="warn">{scan.error ? `Last scan: ${scan.error}` : ""}</Note></div>
+        {scanning ? (
+          <div className="mt-3">
+            <Note tone="info">
+              First scan of the board is running (usually ~10s). Refresh the page after that to see this
+              agent&apos;s live reputation.
+            </Note>
+          </div>
         ) : null}
         <p className="caption-sm mt-4 text-body">
           Trustcore is community tooling. A score is a reading of a public transcript — not a claim, not an
