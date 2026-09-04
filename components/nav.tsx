@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
+import { LogoLockup } from "@/components/logo";
 
 const LINKS = [
   { href: "/create", label: "Create" },
@@ -24,10 +25,7 @@ export function Nav() {
           className="flex items-center gap-2 text-[15px] font-semibold tracking-tight text-ink"
           onClick={() => setOpen(false)}
         >
-          <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-ink text-on-primary">
-            <span className="font-mono text-[13px]">ƒ</span>
-          </span>
-          floptools
+          <LogoLockup mark={22} />
         </Link>
 
         <nav className="hidden items-center gap-1 md:flex" aria-label="Primary">
