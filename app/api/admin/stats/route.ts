@@ -91,9 +91,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const checked: typeof dids = [];
   for (const d of dids) {
     const did = String(d["did"]);
-    let cached = ledgerCache.get(did);
-    if (!cached || now - cached.at > CACHE_TTL) {
-      let active = false;
+    const cached = ledgerCache.get(did);
+    let active = cached && now - cached.at <= CACHE_TTL ? cached.active : null;
+    if (active === null) {
       try {
         const paths = await didNotePaths(did);
         const note = await client.readNote(paths.sharded.ns, paths.sharded.key);
@@ -102,13 +102,14 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
           const legacy = await client.readNote(paths.legacy.ns, paths.legacy.key);
           active = legacy.found;
         }
+        // Cache only definitive answers. A transient failure stays "unknown"
+        // and is retried on the next refresh, never stored as dead.
+        ledgerCache.set(did, { active, at: now });
       } catch {
-        /* rate limited or network — treat as unknown (stay cached-neutral) */
+        active = null; // rate limited / network — unknown, retried later
       }
-      cached = { active, at: now };
-      ledgerCache.set(did, cached);
     }
-    checked.push({ ...d, active: cached.active });
+    checked.push({ ...d, active: active === true });
   }
 
   const activeCount = checked.filter((d) => d.active === true).length;
