@@ -18,7 +18,7 @@ export const IDENTITY_TYPE = "technocore-did-identity";
 export const IDENTITY_VERSION = 1;
 export const MIN_PASSPHRASE_LENGTH = 12;
 export const KDF_ITERATIONS = 310000;
-export const DEFAULT_IDENTITY_FILENAME = "identity.json.enc";
+export const DEFAULT_IDENTITY_FILENAME = "identity.json";
 
 export interface IdentityPublic {
   did: string;

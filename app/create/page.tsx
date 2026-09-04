@@ -1,28 +1,32 @@
 "use client";
 
-import { useRef, useState, useSyncExternalStore } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
-import { Button, Card, CopyButton, DidText, Field, Note, TextInput, TerminalCard } from "@/components/ui";
+import { Button, Card, CopyButton, DidText, Field, Note, TextArea, TextInput, TerminalCard } from "@/components/ui";
 import { useSession } from "@/components/use-session";
 import {
   createIdentity,
   unlockFromFile,
   lock,
   saveEncryptedIdentity,
-  getStoredIdentitySnapshot,
-  subscribeStoredIdentity,
   getLastIdentityFile,
 } from "@/lib/keyring";
 import {
   MIN_PASSPHRASE_LENGTH,
-  isIdentityFile,
-  DEFAULT_IDENTITY_FILENAME,
+  encryptIdentity,
   type IdentityFile,
 } from "@/lib/identity";
+import {
+  SOURCE_IMPORT_FILENAME,
+  resolveImport,
+  detectImport,
+  type DetectedImport,
+} from "@/lib/import";
+import { publicKeyFromSeed } from "@/lib/crypto";
 
 export default function CreatePage() {
   const { did, createdAt } = useSession();
-  const [busy, setBusy] = useState<"create" | "unlock" | null>(null);
+  const [busy, setBusy] = useState<"create" | "unlock" | "import" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -30,31 +34,81 @@ export default function CreatePage() {
   const [pass2, setPass2] = useState("");
   const [keepInBrowser, setKeepInBrowser] = useState(true);
 
-  const [restorePass, setRestorePass] = useState("");
-  const [pickedFile, setPickedFile] = useState<IdentityFile | null>(null);
-  const [pickedName, setPickedName] = useState("");
+  // import card
+  const [importMode, setImportMode] = useState<"file" | "paste">("file");
+  const [importText, setImportText] = useState("");
+  const [importDetected, setImportDetected] = useState<DetectedImport | null>(null);
+  const [importSourcePass, setImportSourcePass] = useState("");
+  const [importNewPass, setImportNewPass] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
 
-  const storedFile = useSyncExternalStore(
-    subscribeStoredIdentity,
-    () => getStoredIdentitySnapshot(),
-    () => null,
-  );
-  const restoreFile = pickedFile ?? storedFile;
-  const fileName = pickedName || (storedFile ? "browser copy" : "none");
-
   const onFileChosen = async (file: File) => {
+    setError(null);
+    setNotice(null);
     try {
       const text = await file.text();
-      const parsed = JSON.parse(text) as unknown;
-      if (!isIdentityFile(parsed)) throw new Error("not a floptools identity file");
-      setPickedFile(parsed);
-      setPickedName(file.name);
-      setError(null);
+      setImportMode("file");
+      setImportText(text);
+      setImportDetected(detectImport(text));
     } catch (e) {
-      setPickedFile(null);
-      setPickedName("");
       setError((e as Error).message);
+    }
+  };
+
+  const onPaste = (value: string) => {
+    setText(value);
+    setImportDetected(value.trim() ? detectImport(value) : null);
+  };
+
+  const doImport = async () => {
+    setError(null);
+    setNotice(null);
+    const det = importDetected;
+    if (!det || det.kind === "unknown") {
+      setError("Choose or paste an identity file first.");
+      return;
+    }
+    if (det.needsPassphrase && !importSourcePass) {
+      setError("This identity is encrypted: its passphrase is required.");
+      return;
+    }
+    // seed flows (pem-plain, seed-json, seed-raw) need a NEW passphrase to store
+    const needsNew = det.kind !== "floptools-encrypted";
+    if (needsNew && importNewPass.length < MIN_PASSPHRASE_LENGTH) {
+      setError(`Choose a passphrase of at least ${MIN_PASSPHRASE_LENGTH} characters to store this identity securely.`);
+      return;
+    }
+    setBusy("import");
+    try {
+      const resolved = await resolveImport(importText, det.needsPassphrase ? importSourcePass : undefined);
+      if (needsNew) {
+        const file = await encryptIdentity(
+          resolved.seed,
+          resolved.did,
+          publicKeyFromSeed(resolved.seed),
+          importNewPass,
+        );
+        await unlockFromFile(file, importNewPass);
+        saveEncryptedIdentity(file);
+        downloadFile(file, SOURCE_IMPORT_FILENAME);
+        setNotice(
+          `Imported and re-encrypted. Downloaded as ${SOURCE_IMPORT_FILENAME}; a copy is saved in this browser.`,
+        );
+      } else {
+        // floptools encrypted: reuse the already-decrypted result
+        const file = JSON.parse(importText) as IdentityFile;
+        await unlockFromFile(file, importSourcePass);
+        saveEncryptedIdentity(file);
+        setNotice("Identity unlocked and its encrypted copy is saved in this browser.");
+      }
+      setImportText("");
+      setImportDetected(null);
+      setImportSourcePass("");
+      setImportNewPass("");
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(null);
     }
   };
 
@@ -72,32 +126,13 @@ export default function CreatePage() {
     setBusy("create");
     try {
       const { identity } = await createIdentity(pass);
-      downloadFile(identity, DEFAULT_IDENTITY_FILENAME);
+      downloadFile(identity, SOURCE_IMPORT_FILENAME);
       if (keepInBrowser) {
         saveEncryptedIdentity(identity);
         setNotice("Created. A copy is saved in this browser (encrypted).");
       } else {
-        setNotice("Created. Keep the file and passphrase · they are the only way back.");
+        setNotice("Created. Keep the file and passphrase: they are the only way back.");
       }
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const onRestore = async () => {
-    setError(null);
-    setNotice(null);
-    if (!restoreFile) {
-      setError("Choose an identity file first.");
-      return;
-    }
-    setBusy("unlock");
-    try {
-      await unlockFromFile(restoreFile, restorePass);
-      setNotice("Unlocked · the key is in memory only.");
-      setRestorePass("");
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -107,13 +142,15 @@ export default function CreatePage() {
 
   const onLock = () => {
     lock();
-    setNotice("Locked · key removed from memory.");
+    setNotice("Locked. Key removed from memory.");
   };
 
   const redownload = () => {
     const file = getLastIdentityFile();
-    if (file) downloadFile(file, DEFAULT_IDENTITY_FILENAME);
+    if (file) downloadFile(file, SOURCE_IMPORT_FILENAME);
   };
+
+  const setText = (value: string) => setImportText(value);
 
   return (
     <div className="mx-auto max-w-4xl px-4 pb-10 pt-12">
@@ -131,7 +168,7 @@ export default function CreatePage() {
         <Card>
           <h2 className="heading-md">New keypair</h2>
           <div className="mt-4 space-y-4">
-            <Field label="Passphrase" hint={`≥ ${MIN_PASSPHRASE_LENGTH} chars. No recovery · this is the only way back.`}>
+            <Field label="Passphrase" hint={`≥ ${MIN_PASSPHRASE_LENGTH} chars. No recovery: this is the only way back.`}>
               <TextInput
                 type="password"
                 value={pass}
@@ -156,7 +193,7 @@ export default function CreatePage() {
                 onChange={(e) => setKeepInBrowser(e.target.checked)}
                 className="h-4 w-4 rounded-sm accent-ink"
               />
-              Keep encrypted copy here (recommended · unlock with passphrase only)
+              Keep encrypted copy here (recommended: unlock with passphrase only)
             </label>
             <Button onClick={onCreate} disabled={busy !== null || !!did} className="w-full">
               {busy === "create" ? "Generating…" : did ? "Identity already unlocked" : "Generate & encrypt"}
@@ -167,39 +204,103 @@ export default function CreatePage() {
           </div>
         </Card>
 
-        {/* Restore */}
+        {/* Master import */}
         <Card>
-          <h2 className="heading-md">Restore from file</h2>
+          <h2 className="heading-md">Import from anywhere</h2>
+          <p className="caption-sm mt-1 text-body">
+            Bring in a did:key from any tool: floptools identity.json, encrypted
+            or plain PKCS8 PEM (e.g. identity.pem), seed JSON, or a raw seed.
+            Sniffed from content, never the extension.
+          </p>
           <div className="mt-4 space-y-4">
-            <Field label="Identity file">
-              <input
-                ref={fileInput}
-                type="file"
-                accept="application/json,.json,.enc"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) void onFileChosen(f);
-                }}
-              />
-              <div className="flex items-center gap-3">
-                <Button variant="secondary" onClick={() => fileInput.current?.click()} className="shrink-0">
-                  Choose file
-                </Button>
-                <span className="body-sm font-mono text-body">{fileName || "none"}</span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className={`rounded-full px-4 py-2 text-sm font-medium ${importMode === "file" ? "bg-ink text-on-primary" : "bg-surface-soft text-ink hover:bg-hairline"}`}
+                onClick={() => setImportMode("file")}
+              >
+                File
+              </button>
+              <button
+                type="button"
+                className={`rounded-full px-4 py-2 text-sm font-medium ${importMode === "paste" ? "bg-ink text-on-primary" : "bg-surface-soft text-ink hover:bg-hairline"}`}
+                onClick={() => setImportMode("paste")}
+              >
+                Paste
+              </button>
+            </div>
+
+            {importMode === "file" ? (
+              <div>
+                <input
+                  ref={fileInput}
+                  type="file"
+                  className="hidden"
+                  accept=".json,.pem,.key,.enc"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) void onFileChosen(f);
+                  }}
+                />
+                <div className="flex items-center gap-3">
+                  <Button variant="secondary" onClick={() => fileInput.current?.click()} className="shrink-0">
+                    Choose file
+                  </Button>
+                  <span className="body-sm font-mono text-body">
+                    {importText ? "file loaded" : "none"}
+                  </span>
+                </div>
               </div>
-            </Field>
-            <Field label="Passphrase">
-              <TextInput
-                type="password"
-                value={restorePass}
-                onChange={(e) => setRestorePass(e.target.value)}
-                placeholder="passphrase"
-                autoComplete="current-password"
+            ) : (
+              <TextArea
+                rows={5}
+                value={importText}
+                onChange={(e) => onPaste(e.target.value)}
+                placeholder={"Paste the identity file contents, PEM block, or a 64-char seed…"}
+                mono
               />
-            </Field>
-            <Button onClick={onRestore} disabled={busy !== null} className="w-full">
-              {busy === "unlock" ? "Unlocking…" : "Unlock"}
+            )}
+
+            {importDetected ? (
+              <div className="rounded-[12px] border border-hairline bg-surface-soft px-3 py-2.5 text-[13px]">
+                <span className="font-medium text-ink">{importDetected.detail}</span>
+                <span className="text-body"> · detected</span>
+                {importDetected.did ? (
+                  <span className="mt-1 block break-all font-mono text-[12px] text-charcoal">{importDetected.did}</span>
+                ) : null}
+              </div>
+            ) : null}
+
+            {importDetected?.needsPassphrase ? (
+              <Field label="Passphrase of the source key">
+                <TextInput
+                  type="password"
+                  value={importSourcePass}
+                  onChange={(e) => setImportSourcePass(e.target.value)}
+                  placeholder="passphrase used by the other tool"
+                  autoComplete="current-password"
+                />
+              </Field>
+            ) : null}
+
+            {importDetected && importDetected.kind !== "floptools-encrypted" ? (
+              <Field label="New passphrase to store it" hint={`It is re-encrypted into identity.json with this passphrase (≥ ${MIN_PASSPHRASE_LENGTH} chars).`}>
+                <TextInput
+                  type="password"
+                  value={importNewPass}
+                  onChange={(e) => setImportNewPass(e.target.value)}
+                  placeholder="new passphrase"
+                  autoComplete="new-password"
+                />
+              </Field>
+            ) : null}
+
+            <Button
+              onClick={doImport}
+              disabled={busy !== null || !importDetected || importDetected.kind === "unknown"}
+              className="w-full"
+            >
+              {busy === "import" ? "Importing…" : importDetected?.kind === "floptools-encrypted" ? "Unlock" : "Import & store"}
             </Button>
           </div>
         </Card>
@@ -217,10 +318,10 @@ export default function CreatePage() {
                 <DidText did={did} prefixChars={24} suffixChars={8} />
               </div>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <CopyButton value={did} label="Copy DID" />
-              <Button variant="secondary" onClick={redownload}>Download file</Button>
-              <Button variant="secondary" onClick={onLock}>Lock</Button>
+            <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+              <CopyButton value={did} label="Copy DID" className="flex-1 sm:flex-none" />
+              <Button variant="secondary" onClick={redownload} className="flex-1 sm:flex-none">Download file</Button>
+              <Button variant="secondary" onClick={onLock} className="flex-1 sm:flex-none">Lock</Button>
             </div>
           </div>
         </Card>
@@ -250,7 +351,7 @@ export default function CreatePage() {
               <span className="font-medium text-ink">Public:</span> the DID. Share anywhere.
             </p>
             <p>
-              <span className="font-medium text-ink">Private:</span> file + passphrase. Never upload, never commit to git.
+              <span className="font-medium text-ink">Private:</span> identity file + passphrase. Never upload, never commit to git.
             </p>
             <p>
               <span className="font-medium text-ink">Never:</span> paste a seed or wallet key into any room. A did:key is not a wallet.
@@ -267,7 +368,7 @@ export default function CreatePage() {
   );
 }
 
-function downloadFile(file: IdentityFile, name: string): void {
+function downloadFile(file: unknown, name: string): void {
   const blob = new Blob([JSON.stringify(file, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
