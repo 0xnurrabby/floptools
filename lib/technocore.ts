@@ -120,7 +120,7 @@ export class TechnocoreClient {
     path: string,
     opts: { timeoutMs?: number; allowText?: boolean; allowedStatuses?: number[] } = {},
   ): Promise<{ status: number; body: string; url: string }> {
-    const timeoutMs = opts.timeoutMs ?? 20000;
+    const timeoutMs = opts.timeoutMs ?? 45000;
     const url = this.upstreamUrl(path);
     let res: Response;
     try {
@@ -133,9 +133,13 @@ export class TechnocoreClient {
     } catch (err) {
       const e = err as Error;
       if (e.name === "TimeoutError") {
-        throw new TechnocoreError(0, "request timed out", "network");
+        throw new TechnocoreError(
+          0,
+          `technocore.chat did not answer within ${Math.round(timeoutMs / 1000)}s`,
+          "network",
+        );
       }
-      throw new TechnocoreError(0, e.message, "network");
+      throw new TechnocoreError(0, e.message.slice(0, 200), "network");
     }
     const body = await res.text();
     const tolerated = opts.allowedStatuses ?? [];

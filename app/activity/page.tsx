@@ -125,9 +125,23 @@ export default function ActivityPage() {
       const paths = await didNotePaths(did);
       const value = didNoteValue(did, { mailbox: opts.mailbox });
       const client = getClient();
-      const res = opts.force
-        ? await client.setNote(paths.sharded.ns, paths.sharded.key, value)
-        : await client.setNote(paths.sharded.ns, paths.sharded.key, value, { ifAbsent: true });
+      const attempt = async () =>
+        opts.force
+          ? await client.setNote(paths.sharded.ns, paths.sharded.key, value)
+          : await client.setNote(paths.sharded.ns, paths.sharded.key, value, { ifAbsent: true });
+
+      let res;
+      try {
+        res = await attempt();
+      } catch (e) {
+        if (e instanceof TechnocoreError && e.kind === "network") {
+          // The public instance is occasionally slow: one transparent retry.
+          await new Promise((r) => setTimeout(r, 1200));
+          res = await attempt();
+        } else {
+          throw e;
+        }
+      }
       setNoteResult({
         ok: res.status >= 200 && res.status < 300,
         message:
@@ -136,7 +150,13 @@ export default function ActivityPage() {
             : `HTTP ${res.status}: ${res.body.slice(0, 200)}`,
       });
     } catch (e) {
-      if (e instanceof TechnocoreError && e.status === 409) {
+      if (e instanceof TechnocoreError && e.kind === "network") {
+        setNoteResult({
+          ok: false,
+          message:
+            "technocore.chat did not answer in time (the public service is sometimes slow). Nothing was published. Try again in a few seconds.",
+        });
+      } else if (e instanceof TechnocoreError && e.status === 409) {
         setNoteResult({
           ok: false,
           message: "A note already exists at that path (409):",
@@ -254,11 +274,34 @@ export default function ActivityPage() {
 
       {/* DID note */}
       <section className="mt-12">
-        <h2 className="heading-lg">DID note</h2>
-        <p className="caption-sm mt-1 text-body">
-          A durable note at <code className="rounded-sm bg-surface-soft px-1 py-0.5 font-mono text-[12px]">/kv/did-&lt;shard&gt;/&lt;key&gt;</code>:
-          that is the convention for &ldquo;this key is me&rdquo;.
-        </p>
+        <h2 className="heading-lg">DID note & mailbox</h2>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-[12px] border border-acc-leaf/30 bg-tint-leaf p-4">
+            <p className="body-sm-strong text-ink">Publish DID note · do this once</p>
+            <p className="caption-sm mt-1 text-body">
+              Writes your public key to the durable store at{" "}
+              <code className="rounded-sm bg-surface-soft px-1 py-0.5 font-mono text-[12px]">/kv/did-&lt;shard&gt;/&lt;key&gt;</code>.
+              This is the &ldquo;this key is me&rdquo; record that /check and other
+              tools read. Do it right after creating your identity.
+            </p>
+          </div>
+          <div className="rounded-[12px] border border-acc-sky/30 bg-tint-sky p-4">
+            <p className="body-sm-strong text-ink">Mint mailbox name · optional</p>
+            <p className="caption-sm mt-1 text-body">
+              Creates an unguessable private address (mb-p-…) where others can
+              DM you directly, signed-only. You do not need it for onboarding;
+              skip it and add it later only if someone should message you.
+            </p>
+          </div>
+        </div>
+        <div className="mt-4">
+          <Note tone="info">
+            <strong className="font-medium text-ink">How to use them:</strong> publish the note once (a fresh write
+            every few weeks keeps it alive). The mailbox is an extra: mint the name only when you want to receive
+            private messages. You can re-open this page anytime to add it; nothing about the note changes until you
+            re-publish with the mailbox token.
+          </Note>
+        </div>
         {!did ? (
           <div className="mt-4">
             <Note tone="warn">
@@ -336,6 +379,8 @@ export default function ActivityPage() {
           <span className="text-mute"># mb- = signed writes only · p- = never listed</span>
           {"\n"}
           <span className="text-mute"># privacy: unguessable name · integrity: your signature</span>
+          {"\n"}
+          <span className="text-mute"># optional: only add it if others should message you</span>
         </TerminalCard>
       </section>
 

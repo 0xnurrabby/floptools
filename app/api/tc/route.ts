@@ -49,7 +49,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     res = await fetch(upstream.toString(), {
       method: "GET",
       cache: "no-store",
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(40000),
       headers: { Accept: "application/json, text/plain;q=0.9" },
     });
   } catch {
