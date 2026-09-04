@@ -23,8 +23,10 @@ function isAuthed(req: NextRequest): boolean {
 async function counts(sql: string, params: unknown[] = []): Promise<number> {
   const rows = await safeQuery(sql, params);
   const first = rows?.[0];
-  const n = first?.["n"] ?? first?.["count"] ?? first?.["total"];
-  return typeof n === "number" ? n : 0;
+  const raw = first?.["n"] ?? first?.["count"] ?? first?.["total"];
+  // pg returns COUNT/SUM (int8) as strings — coerce defensively.
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 0;
 }
 
 async function recentDids(): Promise<Row[]> {
