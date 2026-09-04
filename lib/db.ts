@@ -11,10 +11,24 @@ import { Pool } from "pg";
 
 let pool: Pool | null = null;
 
+function sanitizeConnString(cs: string): string {
+  // pg forwards unknown URL params as postgres startup params, which Neon
+  // rejects. Drop params this driver does not understand.
+  try {
+    const parsed = new URL(cs);
+    parsed.searchParams.delete("channel_binding");
+    parsed.searchParams.delete("channelbinding");
+    return parsed.toString();
+  } catch {
+    return cs.replace(/&?channel_binding=[^&]*/i, "");
+  }
+}
+
 function getPool(): Pool {
-  const cs = process.env.DATABASE_URL ?? "";
-  if (!cs) throw new Error("DATABASE_URL is not set");
+  const raw = process.env.DATABASE_URL ?? "";
+  if (!raw) throw new Error("DATABASE_URL is not set");
   if (!pool) {
+    const cs = sanitizeConnString(raw);
     pool = new Pool({
       connectionString: cs,
       ssl: cs.includes("sslmode=require") || cs.includes("sslmode=verify-full")
@@ -26,6 +40,13 @@ function getPool(): Pool {
     });
   }
   return pool;
+}
+
+/** Last DB failure (one line) so the dashboard can explain itself honestly. */
+export let lastDbError: string | null = null;
+
+export function clearDbError(): void {
+  lastDbError = null;
 }
 
 let schemaReady = false;
@@ -74,13 +95,16 @@ export interface Row {
 export async function safeQuery(sql: string, params: unknown[] = []): Promise<Row[] | null> {
   try {
     await ensureSchema();
-  } catch {
+  } catch (e) {
+    lastDbError = (e as Error).message.slice(0, 240);
     return null;
   }
   try {
     const res = await getPool().query(sql, params);
+    if (lastDbError) clearDbError();
     return res.rows as Row[];
-  } catch {
+  } catch (e) {
+    lastDbError = (e as Error).message.slice(0, 240);
     return null;
   }
 }
@@ -89,7 +113,14 @@ export async function safeExec(sql: string, params: unknown[] = []): Promise<voi
   try {
     await ensureSchema();
     await getPool().query(sql, params);
-  } catch {
+    if (lastDbError) clearDbError();
+  } catch (e) {
     /* never break the caller for a telemetry miss */
+    lastDbError = (e as Error).message.slice(0, 240);
   }
+}
+
+export async function dbHealthy(): Promise<boolean> {
+  const res = await safeQuery("SELECT 1 AS ok");
+  return res !== null;
 }

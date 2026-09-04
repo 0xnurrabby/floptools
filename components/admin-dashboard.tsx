@@ -11,6 +11,7 @@ import {
 } from "@/components/ui";
 
 interface Stats {
+  dbError?: string;
   overview: {
     usersAllTime: number;
     users24h: number;
@@ -27,7 +28,7 @@ interface Stats {
     generationCalls: number;
     activeDids: number;
     trackedDids: number;
-  };
+  } | null;
   dids: { did: string; ip: string; createdAt: string; active: boolean }[];
   topIps: { ip: string; dids: number }[];
   recent: { ip: string; path: string; createdAt: string }[];
@@ -94,7 +95,35 @@ export function AdminDashboard() {
   }
 
   const o = stats.overview;
-  const pct = o.trackedDids > 0 ? Math.round((o.activeDids / o.trackedDids) * 100) : 0;
+  const pct = o && o.trackedDids > 0 ? Math.round((o.activeDids / o.trackedDids) * 100) : 0;
+
+  if (stats.dbError) {
+    return (
+      <div>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="caption-sm text-mute">floptools · dashboard</p>
+            <h1 className="display-lg mt-2">Admin</h1>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={refresh}>Refresh</Button>
+            <Button variant="secondary" onClick={logout}>Sign out</Button>
+          </div>
+        </div>
+        <div className="mt-8">
+          <Note tone="error">
+            <strong className="font-medium text-ink">Database is not reachable.</strong> {stats.dbError}
+            <div className="mt-2">
+              Fix the DATABASE_URL (Neon connection string) in the server environment (Vercel Settings
+              → Environment Variables), then redeploy. Page views, DIDs and AI usage are recorded but
+              cannot be counted until the database accepts the connection.
+            </div>
+          </Note>
+        </div>
+      </div>
+    );
+  }
+  if (!o) return null;
 
   return (
     <div>

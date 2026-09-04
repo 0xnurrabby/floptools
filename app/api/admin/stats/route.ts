@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ADMIN_COOKIE, verifySessionToken } from "@/lib/admin-auth";
-import { safeQuery, type Row } from "@/lib/db";
+import { safeQuery, dbHealthy, lastDbError, type Row } from "@/lib/db";
 import { TechnocoreClient } from "@/lib/technocore";
 import { didNotePaths } from "@/lib/didkey";
 
@@ -40,6 +40,18 @@ async function recentDids(): Promise<Row[]> {
 export async function GET(req: NextRequest): Promise<NextResponse> {
   if (!isAuthed(req)) {
     return NextResponse.json({ ok: false, error: "unauthorized" }, { status: 401 });
+  }
+
+  const dbUp = await dbHealthy();
+  if (!dbUp) {
+    return NextResponse.json({
+      ok: true,
+      dbError: lastDbError ?? "database unreachable",
+      overview: null,
+      dids: [],
+      topIps: [],
+      recent: [],
+    });
   }
 
   const [usersAll, users24, pvAll, pv24, didsAll, dids24, genAll, gen24, tokAll, tok24, genAllRows, didRows, recent] =

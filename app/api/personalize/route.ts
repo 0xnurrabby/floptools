@@ -100,9 +100,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const variation = Math.floor(Math.random() * 1_000_000);
   const { system, user } = buildPrompt({ name, persona, variation });
 
-  let upstream: Response;
-  try {
-    upstream = await fetch(`${GATEWAY_BASE}/chat/completions`, {
+  const callGateway = async (varOffset: number) => {
+    const res = await fetch(`${GATEWAY_BASE}/chat/completions`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${KEY}`,
@@ -112,15 +111,25 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
         model: MODEL,
         messages: [
           { role: "system", content: system },
-          { role: "user", content: user },
+          { role: "user", content: `${user} Variation counter: ${variation + varOffset}.` },
         ],
         temperature: 1.1,
-        max_tokens: 1400,
+        max_tokens: 1600,
         response_format: { type: "json_object" },
       }),
       signal: AbortSignal.timeout(45_000),
       cache: "no-store",
     });
+    const text = await res.text();
+    return { res, text };
+  };
+
+  let upstream: Response;
+  let text: string;
+  try {
+    const first = await callGateway(0);
+    upstream = first.res;
+    text = first.text;
   } catch {
     return NextResponse.json(
       { error: "AI Gateway request failed (network). Try again.", code: "gateway_unreachable" },
@@ -128,7 +137,6 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const text = await upstream.text();
   if (!upstream.ok) {
     const hint =
       upstream.status === 401 || upstream.status === 403
@@ -166,8 +174,28 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   );
 
   if (!content) {
+    // One automatic retry: an empty completion is usually a transient model
+    // hiccup, not a configuration problem.
+    try {
+      const retry = await callGateway(1_000_000);
+      if (retry.res.ok) {
+        const payload = JSON.parse(retry.text) as {
+          choices?: { message?: { content?: string } }[];
+          usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+        };
+        const retryContent = payload.choices?.[0]?.message?.content ?? "";
+        if (retryContent) {
+          content = retryContent;
+          usage = payload.usage;
+        }
+      }
+    } catch {
+      /* give up quietly below */
+    }
+  }
+  if (!content) {
     return NextResponse.json(
-      { error: "AI Gateway returned an empty completion.", code: "empty_completion" },
+      { error: "DeepSeek returned nothing usable this time (empty completion). Press Regenerate in a moment.", code: "empty_completion" },
       { status: 502 },
     );
   }
