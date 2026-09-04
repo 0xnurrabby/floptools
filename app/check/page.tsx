@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import {
   Button,
   Card,
@@ -12,8 +12,14 @@ import {
   TerminalCard,
   TextInput,
 } from "@/components/ui";
+import { useSession } from "@/components/use-session";
 import { getClient, TECHNOBASE } from "@/lib/client";
 import { checkDid, verifyRecord, type DidCheckResult, type RecordVerification } from "@/lib/check";
+
+interface TcAgentResult {
+  ok?: boolean;
+  frames?: { type: string; ts: string; room: string; seq: number; amount: string | null; asset: string | null }[];
+}
 import { isValidDid } from "@/lib/didkey";
 import { TechnocoreError } from "@/lib/technocore";
 import {
@@ -23,10 +29,13 @@ import {
 } from "@/lib/receipts";
 
 export default function CheckPage() {
+  const session = useSession();
   const [did, setDid] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<DidCheckResult | null>(null);
+  const [tcResult, setTcResult] = useState<TcAgentResult | null>(null);
+  const [autoRan, setAutoRan] = useState(false);
 
   const [recRoom, setRecRoom] = useState("");
   const [recSeq, setRecSeq] = useState("");
@@ -40,27 +49,76 @@ export default function CheckPage() {
     () => EMPTY_RECEIPTS,
   );
 
-  const run = async () => {
-    setError(null);
-    setResult(null);
-    const candidate = did.trim();
-    if (!isValidDid(candidate)) {
-      setError("Not a valid did:key (did:key:z6Mk…).");
-      return;
-    }
+  // Default target: the signed-in identity; editable to any other DID.
+  const target = (did.trim() || session.did || "").trim();
+
+  const runFetch = useCallback(
+    (candidate: string) => {
+      setError(null);
+      setResult(null);
+      const local = receipts
+        .filter((r) => r.did === candidate)
+        .map((r) => ({ room: r.room, seq: r.seq, nonce: r.nonce, text: r.text, ts: r.ts }));
+      return (async () => {
+        const [res, tc] = await Promise.all([
+          checkDid(getClient(), candidate, { local }),
+          fetch(`/api/trustcore/agent?did=${encodeURIComponent(candidate)}`, { cache: "no-store" })
+            .then((r) => r.json())
+            .catch(() => null),
+        ]);
+        setResult(res);
+        setTcResult(tc);
+        setAutoRan(true);
+      })().catch(async (e) => {
+        const msg = e instanceof TechnocoreError ? e.body.slice(0, 300) : (e as Error).message;
+        setError(`Could not complete the check: ${msg}`);
+      });
+    },
+    [receipts],
+  );
+
+  // Auto-check the signed-in identity once (no interaction needed). Inline
+  // promise chain: all state updates happen in callbacks, so the effect is
+  // lint-clean and the page paints instantly.
+  useEffect(() => {
+    if (autoRan || !session.did || did) return;
+    const candidate = session.did;
     const local = receipts
       .filter((r) => r.did === candidate)
       .map((r) => ({ room: r.room, seq: r.seq, nonce: r.nonce, text: r.text, ts: r.ts }));
-    setBusy(true);
-    try {
-      const res = await checkDid(getClient(), candidate, { local });
-      setResult(res);
-    } catch (e) {
-      const msg = e instanceof TechnocoreError ? e.body.slice(0, 300) : (e as Error).message;
-      setError(`Could not complete the check: ${msg}`);
-    } finally {
-      setBusy(false);
+    let cancelled = false;
+    Promise.all([
+      checkDid(getClient(), candidate, { local }),
+      fetch(`/api/trustcore/agent?did=${encodeURIComponent(candidate)}`, { cache: "no-store" })
+        .then((r) => r.json())
+        .catch(() => null),
+    ])
+      .then(([res, tc]) => {
+        if (!cancelled) {
+          setResult(res);
+          setTcResult(tc);
+          setAutoRan(true);
+        }
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) {
+          const msg =
+            e instanceof TechnocoreError ? e.body.slice(0, 300) : (e as Error).message;
+          setError(`Could not complete the check: ${msg}`);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [autoRan, session.did, did, receipts]);
+
+  const run = () => {
+    if (!target || !isValidDid(target)) {
+      setError("Enter a valid did:key (did:key:z6Mk…).");
+      return;
     }
+    setBusy(true);
+    void runFetch(target).finally(() => setBusy(false));
   };
 
   const verifyRecordNow = async () => {
@@ -104,7 +162,7 @@ export default function CheckPage() {
           <TextInput
             value={did}
             onChange={(e) => setDid(e.target.value)}
-            placeholder="did:key:z6Mk…"
+            placeholder={session.did ? "did:key:z6Mk… (your signed-in identity)" : "did:key:z6Mk…"}
             mono
             onKeyDown={(e) => {
               if (e.key === "Enter") void run();
@@ -226,6 +284,36 @@ export default function CheckPage() {
           </div>
 
           <div>
+            <h2 className="heading-md">Public record — what this DID did, when</h2>
+            <p className="caption-sm mt-1 text-body">
+              Every item is a real public event, timestamped. Green = confirmed on the ledger (server
+              seq + verified signature) or a public tclk/1 deal frame; the newest items come first.
+            </p>
+            <div className="mt-3 space-y-2">
+              {buildTimeline(result, tcResult).map((row, i) => (
+                <div
+                  key={i}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-[12px] border border-hairline bg-surface-card px-4 py-2.5"
+                >
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <StatusChip tone={row.kind === "signed-seen" ? "ok" : row.kind === "confirmed" ? "ok" : "warn"}>
+                      {row.label}
+                    </StatusChip>
+                    <span className="caption-sm text-mute">{row.at ? fmtTs(row.at) : "time unknown"}</span>
+                    {row.room ? <code className="font-mono text-[12px] text-body">/{row.room}</code> : null}
+                    {row.seq ? <span className="font-mono text-[12px] text-mute">seq {row.seq}</span> : null}
+                    {row.extra ? <span className="caption-sm text-body">{row.extra}</span> : null}
+                  </div>
+                  <span className="min-w-0 flex-1 truncate text-[13px] text-body sm:ml-4">{row.text}</span>
+                </div>
+              ))}
+              {buildTimeline(result, tcResult).length === 0 ? (
+                <p className="caption-sm text-mute">No public items found for this DID yet (signed messages, deal frames or notes).</p>
+              ) : null}
+            </div>
+          </div>
+
+          <div>
             <h2 className="heading-md">Verify with curl</h2>
             <TerminalCard title="independent check" className="mt-3">
               curl -s &apos;{TECHNOBASE}/kv/{result.notePath}&apos;
@@ -303,4 +391,49 @@ function CheckItem({ label, ok, hint }: { label: string; ok: boolean; hint: stri
       <p className="caption-sm mt-1 break-all text-body">{hint}</p>
     </div>
   );
+}
+
+interface TimelineRow {
+  kind: "signed-seen" | "confirmed" | "deal";
+  label: string;
+  at?: string;
+  room?: string;
+  seq?: number;
+  extra?: string;
+  text: string;
+}
+
+function buildTimeline(r: DidCheckResult, tc: TcAgentResult | null): TimelineRow[] {
+  const rows: TimelineRow[] = [];
+  for (const a of r.activity) {
+    for (const m of a.recent ?? []) {
+      rows.push({
+        kind: "signed-seen",
+        label: "signed",
+        at: m.ts,
+        room: a.room,
+        seq: m.seq,
+        text: m.text,
+      });
+    }
+  }
+  for (const f of tc?.frames ?? []) {
+    rows.push({
+      kind: "deal",
+      label: f.type,
+      at: f.ts,
+      room: f.room.replace("mb-p-tclk-", "deal:"),
+      seq: f.seq,
+      extra: f.amount ? `${f.amount} ${f.asset ?? ""}` : undefined,
+      text: f.type,
+    });
+  }
+  return rows
+    .sort((a, b) => new Date(b.at ?? 0).getTime() - new Date(a.at ?? 0).getTime())
+    .slice(0, 40);
+}
+
+function fmtTs(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
 }

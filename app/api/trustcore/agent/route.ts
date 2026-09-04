@@ -57,6 +57,16 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     tierLabel: TIER_LABEL[frames.length === 0 ? "unknown" : metrics.tier],
     metrics,
     deals,
+    frames: frames
+      .slice(0, 20)
+      .map((f) => ({
+        type: f.type,
+        ts: f.ts,
+        room: f.room,
+        seq: f.seq,
+        amount: f.amount ?? null,
+        asset: f.asset ?? null,
+      })),
     scanning,
     scanned: { error: null },
     ledgerCheck: { validDid: true, pubKeyBytes: publicKeyFromDid(did).length },

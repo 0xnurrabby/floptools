@@ -26,6 +26,7 @@ export interface RoomActivity {
   latestSeq: number;
   latestTs?: string;
   latestText?: string;
+  recent?: { seq: number; ts: string; text: string }[];
 }
 
 export interface LocalRecord {
@@ -149,67 +150,74 @@ export async function checkDid(
 
   const [fp, paths] = await Promise.all([didFingerprint(did), didNotePaths(did)]);
 
-  let noteFound = false;
+    let noteFound = false;
   let noteValue = "";
   let notePath = `${paths.sharded.ns}/${paths.sharded.key}`;
-  try {
-    const sharded = await client.readNote(paths.sharded.ns, paths.sharded.key);
-    if (sharded.found) {
-      noteFound = true;
-      noteValue = sharded.value;
-    }
-  } catch {
-    /* 429 or network · keep scanning */
-  }
-  if (!noteFound) {
-    try {
-      const legacy = await client.readNote(paths.legacy.ns, paths.legacy.key);
-      if (legacy.found) {
-        noteFound = true;
-        noteValue = legacy.value;
-        notePath = `${paths.legacy.ns}/${paths.legacy.key}`;
+  // Parallel: sharded + legacy note reads = one round trip of latency.
+  const [shardedNote, legacyNote] = await Promise.all([
+    (async () => {
+      try {
+        return await client.readNote(paths.sharded.ns, paths.sharded.key);
+      } catch {
+        return null;
       }
-    } catch {
-      /* noop */
-    }
+    })(),
+    (async () => {
+      try {
+        return await client.readNote(paths.legacy.ns, paths.legacy.key);
+      } catch {
+        return null;
+      }
+    })(),
+  ]);
+  if (shardedNote?.found) {
+    noteFound = true;
+    noteValue = shardedNote.value;
+  } else if (legacyNote?.found) {
+    noteFound = true;
+    noteValue = legacyNote.value;
+    notePath = `${paths.legacy.ns}/${paths.legacy.key}`;
   }
 
-  const activity: RoomActivity[] = [];
-  for (const room of rooms) {
-    let roomActivity: RoomActivity = {
-      room,
-      scannedMessages: 0,
-      signedMessages: 0,
-      latestSeq: 0,
-    };
-    try {
-      const read = await client.readRoom(room, { limit });
-      let count = 0;
-      let latestSeq = 0;
-      let latestTs: string | undefined;
-      let latestText: string | undefined;
-      for (const m of read.messages) {
-        if (m.from === did) {
-          count++;
-          if (m.seq > latestSeq) {
-            latestSeq = m.seq;
-            latestTs = m.ts;
-            latestText = m.text;
+    const activity: RoomActivity[] = [];
+  try {
+    const results = await Promise.all(
+      rooms.map(async (room) => {
+        try {
+          const read = await client.readRoom(room, { limit });
+          let count = 0;
+          let latestSeq = 0;
+          let latestTs = undefined as string | undefined;
+          let latestText = undefined as string | undefined;
+          const recent: { seq: number; ts: string; text: string }[] = [];
+          for (const m of read.messages) {
+            if (m.from === did) {
+              count++;
+              if (m.seq > latestSeq) {
+                latestSeq = m.seq;
+                latestTs = m.ts;
+                latestText = m.text;
+              }
+              recent.push({ seq: m.seq, ts: m.ts, text: m.text });
+            }
           }
+          return {
+            room,
+            scannedMessages: read.messages.length,
+            signedMessages: count,
+            latestSeq,
+            latestTs,
+            latestText,
+            recent: recent.slice(-10).reverse(),
+          } satisfies RoomActivity as RoomActivity;
+        } catch {
+          return { room, scannedMessages: 0, signedMessages: 0, latestSeq: 0 } satisfies RoomActivity as RoomActivity;
         }
-      }
-      roomActivity = {
-        room,
-        scannedMessages: read.messages.length,
-        signedMessages: count,
-        latestSeq,
-        latestTs,
-        latestText,
-      };
-    } catch {
-      /* room missing, rate limited, or network · skip silently */
-    }
-    activity.push(roomActivity);
+      }),
+    );
+    activity.push(...results);
+  } catch {
+    /* keep whatever scanned */
   }
 
   const signedMessageCount = activity.reduce((acc, a) => acc + a.signedMessages, 0);

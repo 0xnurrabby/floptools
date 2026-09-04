@@ -8,22 +8,26 @@ import {
   removePending,
   subscribePending,
   EMPTY_PENDING,
+  type PendingPublish,
 } from "@/lib/pending-publishes";
 import { useSession } from "@/components/use-session";
 import { getUnlocked, signDraft } from "@/lib/keyring";
 import { getClient } from "@/lib/client";
 import { saveReceipt, sha256Hex, type Receipt } from "@/lib/receipts";
+import { TechnocoreError } from "@/lib/technocore";
 
-const RETRY_MS = 40_000;
+const RETRY_MS = 15_000;
+const MAX_ATTEMPTS = 240;
 
 /**
  * Background publish retrier. While the browser tab is open:
- *  - every 40s it looks for queued publishes,
- *  - if the session is unlocked, it re-signs (fresh nonce) and republishes,
- *  - a success is promoted to a receipt and the queue entry removed.
+ *  - every 15s it tries the queued publishes (fast path: right away);
+ *  - if the session is unlocked, it re-signs (fresh nonce) and republishes;
+ *  - a success is promoted to a receipt and the queue entry removed;
+ *  - a 422 (identical text already on the board in the dup window) is treated
+ *    as "already posted" — the item is marked done, never left hanging.
  * Nonces are per (did, room) and strictly increasing, so a retry is always
- * acceptable to the server. Rate limiting of the original action already
- * happened at click time; this only completes what the user intended.
+ * acceptable to the server.
  */
 export function PublishRetrier() {
   const { did } = useSession();
@@ -32,6 +36,46 @@ export function PublishRetrier() {
   const busy = useRef(false);
 
   useEffect(() => {
+    const publish = async (item: PendingPublish) => {
+      const draft = signDraft(item.room, item.text);
+      const client = getClient();
+      const res = await client.writeSigned({
+        room: item.room,
+        did: draft.did,
+        sig: draft.sig,
+        nonce: draft.nonce,
+        text: draft.sweptText,
+      });
+      if (res.posted?.seq) {
+        const responseHash = await sha256Hex(res.body);
+        const receipt: Receipt = {
+          id: `${draft.did.slice(-6)}-${draft.nonce}`,
+          did: draft.did,
+          room: item.room,
+          seq: res.posted.seq,
+          nonce: draft.nonce,
+          text: draft.sweptText,
+          sig: draft.sig,
+          ts: res.posted.ts,
+          url: res.url,
+          status: res.status,
+          responseHash,
+          createdAt: new Date().toISOString(),
+        };
+        saveReceipt(receipt);
+        removePending(item.id);
+        setStatus(`Publish landed: seq ${res.posted.seq} in /${item.room}`);
+        return;
+      }
+      if (res.status === 422) {
+        // identical text already posted by someone in the dup window — done.
+        removePending(item.id);
+        setStatus(`Already on the board (same text) — marked as published`);
+        return;
+      }
+      markAttempt(item.id);
+    };
+
     const tick = async () => {
       if (busy.current) return;
       const list = getPendingSnapshot();
@@ -41,41 +85,19 @@ export function PublishRetrier() {
       busy.current = true;
       try {
         for (const item of list) {
-          if (item.attempts >= 60) continue;
+          if (item.attempts >= MAX_ATTEMPTS) {
+            markAttempt(item.id); // keeps counting; honestly rare
+            continue;
+          }
           try {
-            const draft = signDraft(item.room, item.text);
-            const client = getClient();
-            const res = await client.writeSigned({
-              room: item.room,
-              did: draft.did,
-              sig: draft.sig,
-              nonce: draft.nonce,
-              text: draft.sweptText,
-            });
-            if (res.posted?.seq) {
-              const responseHash = await sha256Hex(res.body);
-              const receipt: Receipt = {
-                id: `${draft.did.slice(-6)}-${draft.nonce}`,
-                did: draft.did,
-                room: item.room,
-                seq: res.posted.seq,
-                nonce: draft.nonce,
-                text: draft.sweptText,
-                sig: draft.sig,
-                ts: res.posted.ts,
-                url: res.url,
-                status: res.status,
-                responseHash,
-                createdAt: new Date().toISOString(),
-              };
-              saveReceipt(receipt);
+            await publish(item);
+          } catch (e) {
+            if (e instanceof TechnocoreError && e.status === 422) {
               removePending(item.id);
-              setStatus(`Publish landed: seq ${res.posted.seq} in /${item.room}`);
+              setStatus("Already on the board (same text) — marked as published");
             } else {
               markAttempt(item.id);
             }
-          } catch {
-            markAttempt(item.id);
           }
         }
       } finally {
