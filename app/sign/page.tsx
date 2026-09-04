@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useMemo, useState, useSyncExternalStore } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   Button,
@@ -87,6 +87,7 @@ function SignComposer() {
   const [ledgerCheck, setLedgerCheck] = useState<boolean | null>(null);
   const [didRetry, setDidRetry] = useState<string | null>(null);
   const [limitMessage, setLimitMessage] = useState<string | null>(null);
+  const router = useRouter();
   const receipts = useSyncExternalStore(
     subscribeReceipts,
     getReceiptsSnapshot,
@@ -312,6 +313,15 @@ function SignComposer() {
             <Button onClick={publish} disabled={busy || !did} className="w-full">
               {busy ? <Spinner label="Publishing…" /> : "Sign & publish"}
             </Button>
+            {result?.seq ? (
+              <Button
+                variant="secondary"
+                className="w-full"
+                onClick={() => router.push("/activity#templates")}
+              >
+                Back to activity
+              </Button>
+            ) : null}
           </div>
         </Card>
 

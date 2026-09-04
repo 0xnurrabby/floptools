@@ -153,9 +153,10 @@ export default function CheckPage() {
 
           {result.localCount > 0 ? (
             <div>
-              <h2 className="heading-md">Local evidence (this browser)</h2>
+              <h2 className="heading-md">Your confirmations (server-accepted)</h2>
               <p className="caption-sm mt-1 text-body">
-                Signed publishes recorded here; the server accepted each one (status 200, seq assigned).
+                Every message below was accepted by the ledger at publish time (status 200, server-assigned seq)
+                and its signature still verifies offline — the record is permanent even after busy rooms roll on.
               </p>
               <div className="mt-3 space-y-3">
                 {result.localActivity.map((a) => (
@@ -165,9 +166,9 @@ export default function CheckPage() {
                   >
                     <div className="flex items-center gap-3">
                       <code className="font-mono text-[13px] text-ink">/{a.room}</code>
-                      <StatusChip tone="ok">{a.count} recorded</StatusChip>
+                      <StatusChip tone="ok">{a.count} confirmed</StatusChip>
                     </div>
-                    <span className="caption-sm text-body">latest seq {a.latestSeq}</span>
+                    <span className="caption-sm text-body">latest accepted seq {a.latestSeq}</span>
                   </div>
                 ))}
               </div>
@@ -177,8 +178,9 @@ export default function CheckPage() {
           <div>
             <h2 className="heading-md">Signed activity by room</h2>
             <p className="caption-sm mt-1 text-body">
-              On ledger = currently in the public readable tail (busy rooms roll it out within
-              minutes). Recorded locally = this browser has a server-accepted receipt for it.
+              Confirmed = accepted by the ledger at publish time (server seq assigned, signature re-verifiable).
+              On ledger = the message is also inside the currently readable public tail (busy rooms roll quickly,
+              but the acceptance and the signature never expire).
             </p>
             <div className="mt-3 space-y-3">
               {result.activity.length === 0 ? (
@@ -201,7 +203,7 @@ export default function CheckPage() {
                           {signedOnLedger ? `${a.signedMessages} on ledger` : recordedLocally ? "recorded locally" : "none"}
                         </StatusChip>
                         {recordedLocally && signedOnLedger ? (
-                          <StatusChip tone="ok">{local?.count} recorded locally</StatusChip>
+                          <span className="caption-sm text-mute">+{local?.count} older accepted</span>
                         ) : null}
                       </div>
                       {latest > 0 ? (

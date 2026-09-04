@@ -10,6 +10,7 @@ import {
   Note,
   Select,
   Spinner,
+  StatusChip,
   TextInput,
   TerminalCard,
 } from "@/components/ui";
@@ -32,6 +33,12 @@ import {
   saveTemplates,
   clearTemplates,
 } from "@/lib/templates";
+import {
+  getUsageSnapshot,
+  subscribeUsage,
+  markUsed,
+  EMPTY_USAGE,
+} from "@/lib/task-usage";
 
 const STATIC_TEMPLATES: { slot: TemplateSlot; text: string }[] = [
   {
@@ -78,6 +85,11 @@ export default function ActivityPage() {
     subscribeTemplates,
     () => getTemplatesSnapshot(),
     () => null,
+  );
+  const usage = useSyncExternalStore(
+    subscribeUsage,
+    () => getUsageSnapshot(),
+    () => EMPTY_USAGE,
   );
 
   const list = ai
@@ -257,36 +269,60 @@ export default function ActivityPage() {
       </section>
 
       {/* Templates */}
-      <section className="mt-12">
+      <section id="templates" className="mt-12">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h2 className="heading-lg">Check-in templates</h2>
           <span className="caption-sm text-mute">{ai ? "AI-generated" : "built-in"}</span>
         </div>
         <p className="caption-sm mt-1 text-body">Personalize, then sign. They open in the composer.</p>
         <div className="mt-4 space-y-3">
-          {list.map(({ slot, text }) => (
-            <div
-              key={slot}
-              className="flex flex-col gap-3 rounded-[12px] border border-hairline bg-surface-card p-4 sm:flex-row sm:items-center"
-            >
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="body-sm-strong text-ink">{SLOT_META[slot].label}</span>
-                  <code className="rounded-full bg-surface-soft px-2 py-0.5 font-mono text-[12px] text-body">/{SLOT_META[slot].room}</code>
+          {list.map(({ slot, text }) => {
+            const usedAt = usage[slot] ?? 0;
+            return (
+              <div
+                key={slot}
+                className={`flex flex-col gap-3 rounded-[12px] border p-4 sm:flex-row sm:items-center ${
+                  usedAt ? "border-acc-leaf/40" : "border-hairline"
+                } ${usedAt ? "bg-tint-leaf" : "bg-surface-card"}`}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="body-sm-strong text-ink">{SLOT_META[slot].label}</span>
+                    <code className="rounded-full bg-surface-soft px-2 py-0.5 font-mono text-[12px] text-body">/{SLOT_META[slot].room}</code>
+                    {usedAt ? (
+                      <StatusChip tone="ok">
+                        Used {timeAgo(usedAt)}
+                      </StatusChip>
+                    ) : null}
+                  </div>
+                  <p className="body-sm mt-1 text-body">{text}</p>
                 </div>
-                <p className="body-sm mt-1 text-body">{text}</p>
+                <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row">
+                  <Link
+                    href={linkTo(SLOT_META[slot].room, text, slot)}
+                    onClick={() => markUsed(slot)}
+                    className={`inline-flex h-11 w-full items-center justify-center gap-2 rounded-full px-5 text-sm font-medium sm:h-9 sm:w-auto ${
+                      usedAt
+                        ? "border border-acc-leaf/40 bg-tint-leaf text-acc-leaf hover:bg-acc-leaf hover:text-white"
+                        : "bg-ink text-on-primary hover:bg-ink-deep"
+                    }`}
+                  >
+                    {usedAt ? (
+                      <>
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                          <path d="M20 6 9 17l-5-5" />
+                        </svg>
+                        Used again
+                      </>
+                    ) : (
+                      "Use"
+                    )}
+                  </Link>
+                  <CopyButton value={text} label="Copy" className="w-full sm:w-auto" />
+                </div>
               </div>
-              <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row">
-                <Link
-                  href={linkTo(SLOT_META[slot].room, text, slot)}
-                  className="inline-flex h-11 w-full items-center justify-center rounded-full bg-ink px-5 text-sm font-medium text-on-primary hover:bg-ink-deep sm:h-9 sm:w-auto"
-                >
-                  Use
-                </Link>
-                <CopyButton value={text} label="Copy" className="w-full sm:w-auto" />
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </section>
 
@@ -418,6 +454,16 @@ export default function ActivityPage() {
       ) : null}
     </div>
   );
+}
+
+function timeAgo(ms: number): string {
+  const diff = Date.now() - ms;
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs} hr ago`;
+  return `${Math.floor(hrs / 24)} d ago`;
 }
 
 function Rule({ title, body }: { title: string; body: React.ReactNode }) {
