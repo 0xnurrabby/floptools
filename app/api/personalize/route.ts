@@ -113,7 +113,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           { role: "user", content: user },
         ],
         temperature: 1.1,
-        max_tokens: 700,
+        max_tokens: 1400,
         response_format: { type: "json_object" },
       }),
       signal: AbortSignal.timeout(45_000),
@@ -156,8 +156,13 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const parsed = parseTemplatesResponse(content, persona);
   if (!parsed) {
+    // Excerpt of the model output helps diagnose shape/truncation issues.
     return NextResponse.json(
-      { error: "The model output did not match the required structure.", code: "unparsable" },
+      {
+        error: "The model output did not match the required structure.",
+        code: "unparsable",
+        excerpt: content.replace(/\s+/g, " ").slice(0, 240),
+      },
       { status: 502 },
     );
   }
