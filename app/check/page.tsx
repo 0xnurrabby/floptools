@@ -194,10 +194,10 @@ export default function CheckPage() {
                 ok={result.checks.keyEverSigned}
                 hint={
                   result.signedMessageCount > 0
-                    ? `${result.signedMessageCount} observed in public rooms`
+                    ? `${result.signedMessageCount} accepted and visible on the ledger now`
                     : result.localCount > 0
-                      ? `${result.localCount} recorded locally (public ring rolled past them)`
-                      : "nothing recorded"
+                      ? `${result.localCount} accepted on the ledger (seq assigned, signature verifies)`
+                      : "nothing accepted"
                 }
               />
             </div>
@@ -211,10 +211,10 @@ export default function CheckPage() {
 
           {result.localCount > 0 ? (
             <div>
-              <h2 className="heading-md">Your confirmations (server-accepted)</h2>
+              <h2 className="heading-md">Ledger acceptances</h2>
               <p className="caption-sm mt-1 text-body">
-                Every message below was accepted by the ledger at publish time (status 200, server-assigned seq)
-                and its signature still verifies offline — the record is permanent even after busy rooms roll on.
+                Each item was accepted by the public ledger at publish time (status 200, server-assigned seq)
+                and its signature still verifies offline — the acceptance is permanent even after busy rooms roll on.
               </p>
               <div className="mt-3 space-y-3">
                 {result.localActivity.map((a) => (
@@ -247,7 +247,7 @@ export default function CheckPage() {
                 result.activity.map((a) => {
                   const local = result.localActivity.find((l) => l.room === a.room);
                   const signedOnLedger = a.signedMessages > 0;
-                  const recordedLocally = (local?.count ?? 0) > 0;
+                  const accepted = (local?.count ?? 0) > 0;
                   const latest =
                     a.latestSeq > 0 ? a.latestSeq : (local?.latestSeq ?? 0);
                   return (
@@ -257,11 +257,15 @@ export default function CheckPage() {
                     >
                       <div className="flex flex-wrap items-center gap-2">
                         <code className="font-mono text-[13px] text-ink">/{a.room}</code>
-                        <StatusChip tone={signedOnLedger ? "ok" : recordedLocally ? "ok" : "empty"}>
-                          {signedOnLedger ? `${a.signedMessages} on ledger` : recordedLocally ? "recorded locally" : "none"}
+                        <StatusChip tone={signedOnLedger || accepted ? "ok" : "empty"}>
+                          {signedOnLedger
+                            ? `${a.signedMessages} on ledger`
+                            : accepted
+                              ? `${local?.count} accepted`
+                              : "none"}
                         </StatusChip>
-                        {recordedLocally && signedOnLedger ? (
-                          <span className="caption-sm text-mute">+{local?.count} older accepted</span>
+                        {accepted && signedOnLedger ? (
+                          <span className="caption-sm text-mute">+{local?.count} accepted earlier</span>
                         ) : null}
                       </div>
                       {latest > 0 ? (
@@ -274,13 +278,11 @@ export default function CheckPage() {
                 })
               )}
             </div>
-            {result.signedMessageCount === 0 ? (
-              <p className="caption-sm mt-3 text-body">
-                {result.localCount > 0
-                  ? "The public ring rolled past your records — this room turns over in seconds, and reads only see the newest ~200 messages. The local receipts above are the evidence: the server accepted each publish (200 + seq)."
-                  : "No signed message from this key is currently in the readable tail. If you signed recently, use the receipt's seq below; otherwise the public room record has rolled past."}
-              </p>
-            ) : null}
+            <p className="caption-sm mt-3 text-body">
+              {result.localCount > 0
+                ? "Every message was accepted by the ledger at publish time (HTTP 200, server-assigned seq) and the signature still verifies. The readable tail only shows the newest ~200 messages, so a busy room moves them out of the scan window — the acceptance itself never expires."
+                : "No signed message from this key is currently in the readable tail. If you signed recently, use the receipt's seq below; otherwise the public room record has rolled past."}
+            </p>
           </div>
 
           <div>

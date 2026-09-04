@@ -152,14 +152,39 @@ function SignComposer() {
     attempt: number,
   ) => {
     const client = getClient();
-    try {
-      const res = await client.writeSigned({
+    const once = async () =>
+      client.writeSigned({
         room: roomKey,
         did: didKey,
         sig,
         nonce,
         text: sweptText,
       });
+
+    // Must-land: retry same written bytes up to 3 times quickly for transient
+    // failures (network/429/5xx), so the accept happens right at the click.
+    let res: Awaited<ReturnType<typeof once>> | undefined;
+    try {
+      res = await once();
+    } catch (e) {
+      if (attempt === 0 && e instanceof TechnocoreError && e.kind !== "rejected") {
+        let lastErr: Error = e;
+        for (const delay of [0, 1200, 2400]) {
+          if (delay) await new Promise((r) => setTimeout(r, delay));
+          try {
+            res = await once();
+            break;
+          } catch (err) {
+            lastErr = err as Error;
+          }
+        }
+        if (!res) throw lastErr;
+      } else {
+        throw e;
+      }
+    }
+    if (!res) throw new Error("publish failed");
+    try {
       setResult({ url: res.url, status: res.status, body: res.body, seq: res.posted?.seq });
       if (res.posted?.seq) {
         const responseHash = await sha256Hex(res.body);
@@ -365,7 +390,9 @@ function SignComposer() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="heading-lg">Receipts</h2>
-            <p className="caption-sm mt-1 text-body">Saved in this browser. Verify any record against the live ledger.</p>
+            <p className="caption-sm mt-1 text-body">
+              Each receipt is a ledger acceptance (status 200 + server-assigned seq). Re-verify any record against the live ledger.
+            </p>
           </div>
           {receipts.length > 0 ? (
             <Button
