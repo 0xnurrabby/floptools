@@ -6,17 +6,22 @@
  *   - encrypted PKCS8 PEM        (e.g. zunmax technocore-did-starter identity.pem,
  *                                 openssl pkcs8, cryptography BestAvailableEncryption)
  *   - plain PKCS8 PEM            (unencrypted "BEGIN PRIVATE KEY")
+ *   - generic PBKDF2+AES-GCM JSON envelope (community tools: cryptotelugu,
+ *     technocore-work-passport, DID Studio, agent starters; nested or flat
+ *     kdf/cipher fields, any iteration count)
  *   - seed JSON                  ({"seed": hex|base64, {"privateKey": ...}, ...})
  *   - raw seed                   (64 hex chars, or base64url 43 chars)
  *
  * Encrypted PKCS8 support: PBES2 with PBKDF2 (HMAC-SHA256/SHA1/SHA512) and
- * AES-128/192/256-CBC — what openssl and the `cryptography` library emit.
- * An "import" always ends in the same secure state: the seed is re-encrypted
+ * AES-128/192/256-CBC, matching openssl and the `cryptography` library.
+ * Generic envelopes are decrypted in-browser with WebCrypto and validated
+ * against the DID embedded in the envelope before anything is stored.
+ * An import always ends in the same secure state: the seed is re-encrypted
  * into the floptools format with a passphrase of your choice.
  */
 
 import { base64UrlToBytes, publicKeyFromSeed } from "./crypto";
-import { didFromPublicKey } from "./didkey";
+import { didFromPublicKey, isValidDid } from "./didkey";
 import { isIdentityFile, decryptIdentity, type IdentityFile } from "./identity";
 
 export const SOURCE_IMPORT_FILENAME = "identity.json";
@@ -25,6 +30,7 @@ export type DetectedKind =
   | "floptools-encrypted"
   | "pem-encrypted"
   | "pem-plain"
+  | "generic-encrypted-json"
   | "seed-json"
   | "seed-raw"
   | "unknown";
@@ -265,7 +271,137 @@ export async function seedFromPlainPem(pem: string): Promise<Uint8Array<ArrayBuf
   return seedFromPkcs8Der(base64ToBytes(pemToBase64(pem)));
 }
 
-/* ---------- seed text parsing ---------- */
+/* ---------- generic PBKDF2 + AES-GCM JSON envelope ---------- */
+
+interface Envelope {
+  salt: string;
+  iterations: number;
+  iv: string;
+  ciphertext: string;
+  did?: string;
+  publicKey?: string;
+}
+
+/** Normalize flat or nested (kdf/cipher objects) community envelope fields. */
+export function normalizeEnvelope(obj: Record<string, unknown>): Envelope | null {
+  const kdf = (obj.kdf ?? {}) as Record<string, unknown>;
+  const cipher = (obj.cipher ?? {}) as Record<string, unknown>;
+  const salt = typeof obj.salt === "string" ? obj.salt : typeof kdf.salt === "string" ? kdf.salt : undefined;
+  const iterationsNum =
+    typeof obj.iterations === "number"
+      ? obj.iterations
+      : typeof kdf.iterations === "number"
+        ? kdf.iterations
+        : undefined;
+  const ivText = typeof obj.iv === "string" ? obj.iv : typeof cipher.iv === "string" ? cipher.iv : undefined;
+  const ciphertextText =
+    typeof obj.ciphertext === "string"
+      ? obj.ciphertext
+      : typeof cipher.ciphertext === "string"
+        ? cipher.ciphertext
+        : undefined;
+  if (!salt || !iterationsNum || !ivText || !ciphertextText) return null;
+  if (iterationsNum < 1 || iterationsNum > 50_000_000) return null;
+  const did = typeof obj.did === "string" && isValidDid(obj.did) ? obj.did : undefined;
+  const publicKey = typeof obj.publicKey === "string" ? obj.publicKey : undefined;
+  return { salt, iterations: iterationsNum, iv: ivText, ciphertext: ciphertextText, did, publicKey };
+}
+
+/** Decrypt a community envelope (PBKDF2-SHA256 + AES-GCM) and locate the seed. */
+export async function seedFromGenericEnvelope(
+  obj: Record<string, unknown>,
+  passphrase: string,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const env = normalizeEnvelope(obj);
+  if (!env) throw new Error("the JSON is not a recognized PBKDF2 + AES-GCM identity backup");
+
+  const enc = new TextEncoder();
+  const baseKey = await crypto.subtle.importKey("raw", enc.encode(passphrase), "PBKDF2", false, ["deriveKey"]);
+  const aesKey = await crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt: base64UrlToBytes(env.salt), iterations: env.iterations, hash: "SHA-256" },
+    baseKey,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["decrypt"],
+  );
+
+  let plain: ArrayBuffer;
+  try {
+    plain = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: base64UrlToBytes(env.iv) },
+      aesKey,
+      base64UrlToBytes(env.ciphertext) as BufferSource,
+    );
+  } catch {
+    throw new Error("could not decrypt this backup: wrong passphrase or corrupted file");
+  }
+
+  const plainBytes = new Uint8Array(plain);
+
+  // 1) plaintext JSON with a seed-ish field
+  let seed = null as Uint8Array | null;
+  try {
+    const parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(plainBytes)) as Record<string, unknown>;
+    seed = seedFromJson(parsed);
+    if (!seed) {
+      // some communities nest the seed deeper or name it differently
+      seed = deepSeedLookup(parsed);
+    }
+  } catch {
+    /* not JSON */
+  }
+  // 2) raw UTF-8 representation (hex or base64url)
+  if (!seed) {
+    try {
+      const text = new TextDecoder("utf-8", { fatal: true }).decode(plainBytes).trim();
+      seed = parseSeedText(text) ?? parseSeedText(text.replace(/^0x/i, ""));
+    } catch {
+      /* not text */
+    }
+  }
+  // 3) plain 32 raw bytes
+  if (!seed && plainBytes.length === 32) seed = plainBytes;
+
+  if (!seed || seed.length !== 32) {
+    throw new Error(
+      "decrypted successfully, but the seed inside it could not be located in this tool's layout. Share the backup with its creator for a converter.",
+    );
+  }
+
+  // 4) self-validation against the envelope's embedded identifiers
+  const pub = publicKeyFromSeed(seed);
+  const derivedDid = didFromPublicKey(pub);
+  if (env.did && derivedDid !== env.did) {
+    throw new Error("decrypted key does not match the DID declared in the backup (file tampered or mixed up)");
+  }
+  if (env.publicKey) {
+    let stored: Uint8Array<ArrayBuffer> | null = null;
+    try {
+      stored = base64UrlToBytes(env.publicKey.trim());
+    } catch {
+      stored = null; // not base64url bytes — did check stays authoritative
+    }
+    if (stored && (stored.length !== pub.length || !stored.every((b, i) => b === pub[i]))) {
+      throw new Error("decrypted key does not match the public key declared in the backup (file tampered)");
+    }
+  }
+
+  return seed as Uint8Array<ArrayBuffer>;
+}
+
+function deepSeedLookup(obj: unknown): Uint8Array | null {
+  if (!obj || typeof obj !== "object") return null;
+  for (const value of Object.values(obj as Record<string, unknown>)) {
+    if (value && typeof value === "object") {
+      const s = deepSeedLookup(value);
+      if (s) return s;
+    } else if (typeof value === "string") {
+      const s = parseSeedText(value);
+      if (s) return s;
+    }
+  }
+  return null;
+}
 
 export interface SeedParse {
   seed: Uint8Array<ArrayBuffer>;
@@ -319,9 +455,19 @@ export function detectImport(text: string): DetectedImport {
         return { kind: "floptools-encrypted", detail: "floptools encrypted identity JSON", needsPassphrase: true };
       }
       if (parsed && typeof parsed === "object") {
-        const seed = seedFromJson(parsed as Record<string, unknown>);
+        const obj = parsed as Record<string, unknown>;
+        const seed = seedFromJson(obj);
         if (seed) {
           return { kind: "seed-json", detail: "seed JSON (hex or base64)", needsPassphrase: false, did: didFromPublicKey(publicKeyFromSeed(seed)) };
+        }
+        const env = normalizeEnvelope(obj);
+        if (env) {
+          return {
+            kind: "generic-encrypted-json",
+            detail: `encrypted community backup (PBKDF2-SHA256 x${env.iterations.toLocaleString()}, AES-256-GCM)`,
+            needsPassphrase: true,
+            did: env.did,
+          };
         }
       }
       return { kind: "unknown", detail: "recognized JSON but no key material found", needsPassphrase: false };
@@ -371,6 +517,11 @@ export async function resolveImport(
     }
     case "pem-plain": {
       const seed = await seedFromPlainPem(text);
+      return { seed, did: didFromPublicKey(publicKeyFromSeed(seed)), sourceKind: det.kind };
+    }
+    case "generic-encrypted-json": {
+      if (!sourcePassphrase) throw new Error("passphrase required for this encrypted backup");
+      const seed = await seedFromGenericEnvelope(JSON.parse(text) as Record<string, unknown>, sourcePassphrase);
       return { seed, did: didFromPublicKey(publicKeyFromSeed(seed)), sourceKind: det.kind };
     }
     case "seed-json":

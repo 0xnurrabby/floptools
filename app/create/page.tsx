@@ -212,8 +212,9 @@ export default function CreatePage() {
           <h2 className="heading-md">Import from anywhere</h2>
           <p className="caption-sm mt-1 text-body">
             Bring in a did:key from any tool: floptools identity.json, encrypted
-            or plain PKCS8 PEM (e.g. identity.pem), seed JSON, or a raw seed.
-            Sniffed from content, never the extension.
+            or plain PKCS8 PEM (e.g. identity.pem), community JSON backups
+            (cryptotelugu, technocore-work-passport, DID Studio), seed JSON, or
+            a raw seed. Sniffed from content, never the extension.
           </p>
           <div className="mt-4 space-y-4">
             <div className="flex gap-2">
