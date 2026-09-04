@@ -91,6 +91,31 @@ export async function ensureSchema(): Promise<void> {
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `);
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS trustcore_frames (
+        hash TEXT PRIMARY KEY,
+        room TEXT NOT NULL,
+        seq BIGINT NOT NULL,
+        did TEXT NOT NULL,
+        frame_type TEXT NOT NULL,
+        contract_id TEXT,
+        offer_id TEXT,
+        ref TEXT,
+        amount TEXT,
+        asset TEXT,
+        role TEXT,
+        outcome TEXT,
+        rail TEXT,
+        lock_kind TEXT,
+        nonce TEXT,
+        ts TEXT,
+        raw_text TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    await p.query(`CREATE INDEX IF NOT EXISTS idx_tc_frames_did ON trustcore_frames (did)`);
+    await p.query(`CREATE INDEX IF NOT EXISTS idx_tc_frames_contract ON trustcore_frames (contract_id)`);
+    await p.query(`CREATE INDEX IF NOT EXISTS idx_tc_frames_created ON trustcore_frames (created_at)`);
     schemaReady = true;
   })();
   await schemaPending;

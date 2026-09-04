@@ -10,6 +10,7 @@ const LINKS = [
   { href: "/sign", label: "Sign" },
   { href: "/activity", label: "Activity" },
   { href: "/check", label: "Check" },
+  { href: "/trustcore", label: "Trustcore" },
   { href: "/docs", label: "Docs" },
 ];
 
