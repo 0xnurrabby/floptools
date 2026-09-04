@@ -151,8 +151,8 @@ export default function ActivityPage() {
     setIncludeMailbox(true);
   };
 
-  const linkTo = (text: string) =>
-    `/sign?text=${encodeURIComponent(text)}`;
+  const linkTo = (room: string, text: string) =>
+    `/sign?room=${encodeURIComponent(room)}&text=${encodeURIComponent(text)}`;
 
   return (
     <div className="mx-auto max-w-4xl px-4 pb-10 pt-12">
@@ -236,7 +236,7 @@ export default function ActivityPage() {
               </div>
               <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row">
                 <Link
-                  href={linkTo(text)}
+                  href={linkTo(SLOT_META[slot].room, text)}
                   className="inline-flex h-11 w-full items-center justify-center rounded-full bg-ink px-5 text-sm font-medium text-on-primary hover:bg-ink-deep sm:h-9 sm:w-auto"
                 >
                   Use
