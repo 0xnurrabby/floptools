@@ -176,34 +176,48 @@ export default function CheckPage() {
 
           <div>
             <h2 className="heading-md">Signed activity by room</h2>
+            <p className="caption-sm mt-1 text-body">
+              On ledger = currently in the public readable tail (busy rooms roll it out within
+              minutes). Recorded locally = this browser has a server-accepted receipt for it.
+            </p>
             <div className="mt-3 space-y-3">
               {result.activity.length === 0 ? (
                 <p className="caption-sm text-mute">No rooms scanned.</p>
               ) : (
-                result.activity.map((a) => (
-                  <div
-                    key={a.room}
-                    className="flex flex-wrap items-center justify-between gap-2 rounded-[12px] border border-hairline bg-surface-card px-4 py-3"
-                  >
-                    <div className="flex items-center gap-3">
-                      <code className="font-mono text-[13px] text-ink">/{a.room}</code>
-                      <StatusChip tone={a.signedMessages > 0 ? "ok" : "empty"}>
-                        {a.signedMessages === 0 ? "none" : `${a.signedMessages} signed`}
-                      </StatusChip>
+                result.activity.map((a) => {
+                  const local = result.localActivity.find((l) => l.room === a.room);
+                  const signedOnLedger = a.signedMessages > 0;
+                  const recordedLocally = (local?.count ?? 0) > 0;
+                  const latest =
+                    a.latestSeq > 0 ? a.latestSeq : (local?.latestSeq ?? 0);
+                  return (
+                    <div
+                      key={a.room}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-[12px] border border-hairline bg-surface-card px-4 py-3"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <code className="font-mono text-[13px] text-ink">/{a.room}</code>
+                        <StatusChip tone={signedOnLedger ? "ok" : recordedLocally ? "ok" : "empty"}>
+                          {signedOnLedger ? `${a.signedMessages} on ledger` : recordedLocally ? "recorded locally" : "none"}
+                        </StatusChip>
+                        {recordedLocally && signedOnLedger ? (
+                          <StatusChip tone="ok">{local?.count} recorded locally</StatusChip>
+                        ) : null}
+                      </div>
+                      {latest > 0 ? (
+                        <span className="caption-sm text-body">latest seq {latest}</span>
+                      ) : (
+                        <span className="caption-sm text-mute">n/a</span>
+                      )}
                     </div>
-                    {a.latestSeq > 0 ? (
-                      <span className="caption-sm text-body">seq {a.latestSeq}</span>
-                    ) : (
-                      <span className="caption-sm text-mute">n/a</span>
-                    )}
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
             {result.signedMessageCount === 0 ? (
               <p className="caption-sm mt-3 text-body">
                 {result.localCount > 0
-                  ? "The public ring rolled past your records: this room turns over in seconds, and reads only see the newest ~200 messages. That is why the local evidence above matters: the server accepted each publish (200 + seq)."
+                  ? "The public ring rolled past your records — this room turns over in seconds, and reads only see the newest ~200 messages. The local receipts above are the evidence: the server accepted each publish (200 + seq)."
                   : "No signed message from this key is currently in the readable tail. If you signed recently, use the receipt's seq below; otherwise the public room record has rolled past."}
               </p>
             ) : null}

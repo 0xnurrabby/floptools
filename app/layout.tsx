@@ -5,6 +5,7 @@ import { Nav } from "@/components/nav";
 import { Footer } from "@/components/footer";
 import { PageTracker } from "@/components/page-tracker";
 import { SessionBanner } from "@/components/session-banner";
+import { PublishRetrier } from "@/components/publish-retrier";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -50,6 +51,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <main className="flex-1">{children}</main>
         <Footer />
         <PageTracker />
+        <PublishRetrier />
       </body>
     </html>
   );

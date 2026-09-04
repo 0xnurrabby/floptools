@@ -34,6 +34,7 @@ import {
   EMPTY_RECEIPTS,
   type Receipt,
 } from "@/lib/receipts";
+import { addPending } from "@/lib/pending-publishes";
 import { UnlockIdentity } from "@/components/unlock";
 
 const ROOMS = [
@@ -199,7 +200,45 @@ function SignComposer() {
         }
       }
       if (e instanceof TechnocoreError && e.kind === "rate_limited") {
-        setError(`Rate limited. ${e.body}`);
+        // Queue it: the retrier will complete it with a fresh nonce once the
+        // bucket refills, while this tab stays open.
+        addPending({
+          id: pendingId(didKey),
+          did: didKey,
+          room: roomKey,
+          text: sweptText,
+          createdAt: new Date().toISOString(),
+          attempts: 0,
+        });
+        setError(
+          `Rate limited (the queue will retry automatically in the background — nothing lost). ${e.body.slice(0, 140)}`,
+        );
+        return;
+      }
+      if (e instanceof TechnocoreError && e.kind === "network") {
+        addPending({
+          id: pendingId(didKey),
+          did: didKey,
+          room: roomKey,
+          text: sweptText,
+          createdAt: new Date().toISOString(),
+          attempts: 0,
+        });
+        setError(
+          "The publish did not reach technocore.chat. It is queued — the app will retry automatically in the background while this tab stays open.",
+        );
+        return;
+      }
+      if (e instanceof TechnocoreError && e.status >= 500) {
+        addPending({
+          id: pendingId(didKey),
+          did: didKey,
+          room: roomKey,
+          text: sweptText,
+          createdAt: new Date().toISOString(),
+          attempts: 0,
+        });
+        setError("The server answered with a transient error. It is queued and will retry in the background.");
         return;
       }
       throw e;
@@ -474,4 +513,9 @@ function ReceiptField({ k, v }: { k: string; v: string }) {
 function extractCanonical(body: string): string | null {
   const m = /([a-z0-9][a-z0-9_-]{0,47})\|[0-9]{1,19}\|.+/.exec(body);
   return m ? m[0].trim() : null;
+}
+
+/** Module-scope (not in render) id generator for pending publishes. */
+function pendingId(didKey: string): string {
+  return `${didKey.slice(-6)}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
 }
