@@ -5,7 +5,6 @@ import { useParams } from "next/navigation";
 import { Note, Spinner, StatusChip } from "@/components/ui";
 import { getClient } from "@/lib/client";
 import {
-  OFFERS_ROOM,
   contractId,
   dealRoom,
   foldContract,
@@ -13,7 +12,9 @@ import {
   decodePaperRecord,
   shortContract,
   verifySecret,
+  type AcceptFrame,
   type FoldResult,
+  type OfferFrame,
   type PaperRecord,
   type RecordInput,
 } from "@/lib/tclk-deal";
@@ -23,12 +24,14 @@ interface ReceiptView {
   paper: PaperRecord | null;
   loaded: boolean;
   error: string | null;
+  pairFound: boolean;
+  pairChecked: boolean;
 }
 
 export default function DealReceiptPage() {
   const params = useParams<{ contract: string }>();
   const contract = decodeURIComponent(params.contract);
-  const [view, setView] = useState<ReceiptView>({ records: [], paper: null, loaded: false, error: null });
+  const [view, setView] = useState<ReceiptView>({ records: [], paper: null, loaded: false, error: null, pairFound: false, pairChecked: false });
   const [fold, setFold] = useState<FoldResult | null>(null);
 
   const refresh = useCallback(() => {
@@ -36,7 +39,15 @@ export default function DealReceiptPage() {
     const roomName = room ?? "";
     const client = getClient();
     const job = Promise.all([
-      client.readRoom(OFFERS_ROOM, { limit: 200 }).catch(() => null),
+      (async () => {
+        try {
+          const res = await fetch(`/api/tc/deal-lookup?contract=${encodeURIComponent(contract)}`);
+          const data = (await res.json()) as { found?: boolean; error?: string; offer?: OfferFrame; offerRecord?: RecordInput; accept?: AcceptFrame; acceptRecord?: RecordInput };
+          return res.ok ? data : { error: data.error ?? `lookup failed (HTTP ${res.status})` };
+        } catch (e) {
+          return { error: (e as Error).message };
+        }
+      })(),
       room ? client.readRoom(room, { limit: 200 }).catch(() => null) : Promise.resolve(null),
       (async () => {
         try {
@@ -48,18 +59,23 @@ export default function DealReceiptPage() {
         }
       })(),
     ]);
-    void job.then(async ([offersRoom, dealRoomRead, paperRaw]) => {
+    void job.then(async ([lookup, dealRoomRead, paperRaw]) => {
       const records: RecordInput[] = [];
-      for (const m of offersRoom?.messages ?? []) {
-        records.push({ room: OFFERS_ROOM, from: m.from, text: m.text, seq: m.seq, ts: m.ts, sig: m.sig });
+      let pairFound = false;
+      let error: string | null = null;
+      if (lookup.error) {
+        error = `Could not read the board: ${lookup.error}`;
+      } else if (lookup.found && lookup.offer && lookup.offerRecord && lookup.accept && lookup.acceptRecord) {
+        records.push(lookup.offerRecord, lookup.acceptRecord);
+        pairFound = true;
       }
       for (const m of dealRoomRead?.messages ?? []) {
         records.push({ room: roomName, from: m.from, text: m.text, seq: m.seq, ts: m.ts, sig: m.sig });
       }
       const paper = paperRaw ? decodePaperRecord(paperRaw) : null;
-      const f = await foldContract(records, paper);
+      const f = await foldContract(records, paper, { contract });
       setFold(f);
-      setView({ records, paper, loaded: true, error: null });
+      setView({ records, paper, loaded: true, error, pairFound, pairChecked: true });
     });
   }, [contract]);
 
@@ -145,7 +161,17 @@ export default function DealReceiptPage() {
             <h2 className="heading-lg">Checks</h2>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <CheckRow label="Contract id" ok={idOk} hint={idDetail} />
-              <CheckRow label="Offer + accept on the board" ok={!!offer && !!accept} hint={offer && accept ? "both public in tclk-offers" : "missing"} />
+              <CheckRow
+                label="Offer + accept on the board"
+                ok={view.pairChecked ? offer !== null && accept !== null : null}
+                hint={
+                  offer && accept
+                    ? "both public in tclk-offers, matched by this contract id"
+                    : view.pairChecked
+                      ? "not found in the retained ring of tclk-offers (only the newest ~10 MiB is kept)"
+                      : "checking…"
+                }
+              />
               <CheckRow label="Lock on the deal room" ok={!!fold?.lock} hint={fold?.lock ? `rail ${fold?.lock.rail} · ref ${fold?.lock.ref.slice(0, 14)}…` : "missing"} />
               <CheckRow label="Reveal + secret opens statement" ok={secretCheck?.ok ?? false} hint={secretCheck?.detail ?? "no reveal frame yet"} />
               <CheckRow label="Paper rail record agrees" ok={view.paper !== null} hint={view.paper ? `status ${view.paper.status}` : "no record"} />

@@ -7,7 +7,7 @@
  * or stores anything.
  */
 
-import type { AcceptFrame, LockFrame, OfferFrame, ReceiptFrame, RevealFrame } from "./tclk-deal";
+import type { AcceptFrame, LockFrame, OfferFrame, ReceiptFrame, RecordInput, RevealFrame } from "./tclk-deal";
 
 const KEY = "floptools.deals.v1";
 const EVENT = "floptools:deals";
@@ -23,6 +23,10 @@ export interface DealRecord {
   lock?: LockFrame;
   reveal?: RevealFrame;
   receipt?: ReceiptFrame;
+  /** The signed public record of the offer as the venue stored it (seq/ts/from). */
+  offerRecord?: RecordInput;
+  /** The signed public record of the accept as the venue stored it (seq/ts/from). */
+  acceptRecord?: RecordInput;
   createdAt: number;
 }
 

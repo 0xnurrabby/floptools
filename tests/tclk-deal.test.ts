@@ -121,7 +121,7 @@ describe("tclk-deal conformance with @flop-labs/tclk", () => {
       { room: deal, from: PAYER, text: mine.encodeFrame(mine.makeLock({ from: PAYER, contract: c, rail: "paper", ref: c })), seq: 3, ts: t(2), sig: "s" },
       { room: deal, from: PAYEE, text: line, seq: 4, ts: t(3), sig: "s" },
     ];
-    const fold = await mine.foldContract(records, null, { now: T0 });
+    const fold = await mine.foldContract(records, null, { now: T0, contract: c });
     expect(fold.state).toBe("claimed");
     expect(fold.reveal?.ref).toBe(c);
   });
@@ -166,7 +166,7 @@ describe("tclk-deal conformance with @flop-labs/tclk", () => {
       secret: preimage,
     }));
 
-    const fold = await mine.foldContract(records, paper, { now });
+    const fold = await mine.foldContract(records, paper, { now, contract: c });
     expect(fold.state).toBe("claimed");
     expect(fold.receipt?.outcome).toBe("claimed");
     expect(fold.steps.filter((s) => s.step !== "work").every((s) => s.done)).toBe(true);
@@ -193,11 +193,11 @@ describe("tclk-deal conformance with @flop-labs/tclk", () => {
     ];
 
     const wrongLock = [...base, { room: deal, from: PAYEE, text: mine.encodeFrame(mine.makeLock({ from: PAYEE, contract: c, rail: "paper", ref: c })), seq: 3, ts: t(2), sig: "s" }];
-    expect((await mine.foldContract(wrongLock, null)).state).toBe("accepted");
+    expect((await mine.foldContract(wrongLock, null, { contract: c })).state).toBe("accepted");
 
     const lockRec = { room: deal, from: PAYER, text: mine.encodeFrame(mine.makeLock({ from: PAYER, contract: c, rail: "paper", ref: c })), seq: 3, ts: t(2), sig: "s" };
     const badSecret = { room: deal, from: PAYEE, text: mine.encodeFrame(mine.makeReveal({ from: PAYEE, contract: c, ref: c, secret: `0x${"99".repeat(32)}` })), seq: 4, ts: t(3), sig: "s" };
-    const fold = await mine.foldContract([...base, lockRec, badSecret], null);
+    const fold = await mine.foldContract([...base, lockRec, badSecret], null, { contract: c });
     expect(fold.state).toBe("locked");
     expect(fold.reveal).toBeNull();
   });
@@ -210,7 +210,7 @@ describe("tclk-deal conformance with @flop-labs/tclk", () => {
       { room: "tclk-offers", from: PAYER, text: mine.encodeFrame(offer), seq: 1, ts: t(0), sig: "s" },
       { room: "tclk-offers", from: PAYEE, text: mine.encodeFrame(accept), seq: 2, ts: t(1), sig: "s" },
     ];
-    const fold = await mine.foldContract(records, null);
+    const fold = await mine.foldContract(records, null, { contract: accept.contract });
     const guard = mine.nextGuard(fold, null, { myDid: PAYER });
     expect(guard.action).toBe("write paper record");
     expect(guard.blocked).toBe(false);
@@ -221,7 +221,7 @@ describe("tclk-deal conformance with @flop-labs/tclk", () => {
       statement: hash,
       refundAfterMs: BASE.refundAfterMs,
     }));
-    const after = mine.nextGuard(await mine.foldContract(records, paper), paper, { myDid: PAYER });
+    const after = mine.nextGuard(await mine.foldContract(records, paper, { contract: accept.contract }), paper, { myDid: PAYER });
     expect(after.action).toBe("post lock");
 
     // a record that exists but does NOT match the signed statement blocks the lock
@@ -231,8 +231,61 @@ describe("tclk-deal conformance with @flop-labs/tclk", () => {
       statement: `0x${"ff".repeat(32)}`,
       refundAfterMs: BASE.refundAfterMs,
     }))!;
-    const blocked = mine.nextGuard(await mine.foldContract(records, wrongPaper), wrongPaper, { myDid: PAYER });
+    const blocked = mine.nextGuard(await mine.foldContract(records, wrongPaper, { contract: accept.contract }), wrongPaper, { myDid: PAYER });
     expect(blocked.blocked).toBe(true);
     expect(blocked.action).toBe("fix paper record");
+  });
+
+  it("anchors the pair by contract id when several offers are in the room", async () => {
+    const offerA = await mine.makeOffer({ from: PAYER, role: "payer", ...BASE });
+    const offerB = await mine.makeOffer({ from: didFromByte(3), role: "payer", ...BASE, amount: "200" });
+    const preA = await mine.hashLockFromPreimage(`0x${"01".repeat(32)}`);
+    const preB = await mine.hashLockFromPreimage(`0x${"02".repeat(32)}`);
+    const acceptA = await mine.makeAccept(offerA, { from: PAYEE, statement: preA.hash });
+    const acceptB = await mine.makeAccept(offerB, { from: didFromByte(4), statement: preB.hash });
+
+    // B's records come FIRST — a naive "first offer in the room" fold would pick B.
+    const records: mine.RecordInput[] = [
+      { room: "tclk-offers", from: didFromByte(3), text: mine.encodeFrame(offerB), seq: 1, ts: t(0), sig: "s" },
+      { room: "tclk-offers", from: didFromByte(4), text: mine.encodeFrame(acceptB), seq: 2, ts: t(1), sig: "s" },
+      { room: "tclk-offers", from: PAYER, text: mine.encodeFrame(offerA), seq: 3, ts: t(2), sig: "s" },
+      { room: "tclk-offers", from: PAYEE, text: mine.encodeFrame(acceptA), seq: 4, ts: t(3), sig: "s" },
+    ];
+
+    const foldA = await mine.foldContract(records, null, { contract: acceptA.contract });
+    expect(foldA.state).toBe("accepted");
+    expect(foldA.offer?.id).toBe(offerA.id);
+    expect(foldA.accept?.from).toBe(PAYEE);
+
+    const foldB = await mine.foldContract(records, null, { contract: acceptB.contract });
+    expect(foldB.state).toBe("accepted");
+    expect(foldB.offer?.id).toBe(offerB.id);
+  });
+
+  it("fails closed when the accept record has no timestamp", async () => {
+    const offer = await mine.makeOffer({ from: PAYER, role: "payer", ...BASE });
+    const preimage = `0x${"45".repeat(32)}`;
+    const hash = (await mine.hashLockFromPreimage(preimage)).hash;
+    const accept = await mine.makeAccept(offer, { from: PAYEE, statement: hash });
+    const records: mine.RecordInput[] = [
+      { room: "tclk-offers", from: PAYER, text: mine.encodeFrame(offer), seq: 1, ts: t(0), sig: "s" },
+      { room: "tclk-offers", from: PAYEE, text: mine.encodeFrame(accept), seq: 2, ts: "", sig: "s" },
+    ];
+    const fold = await mine.foldContract(records, null, { contract: accept.contract });
+    expect(fold.state).toBe("proposed");
+    expect(fold.stateReason).toContain("missing or malformed");
+  });
+
+  it("reports honestly when no pair hashes to the contract id", async () => {
+    const offer = await mine.makeOffer({ from: PAYER, role: "payer", ...BASE });
+    const accept = await mine.makeAccept(offer, { from: PAYEE, statement: (await mine.hashLockFromPreimage(`0x${"67".repeat(32)}`)).hash });
+    const records: mine.RecordInput[] = [
+      { room: "tclk-offers", from: PAYER, text: mine.encodeFrame(offer), seq: 1, ts: t(0), sig: "s" },
+      { room: "tclk-offers", from: PAYEE, text: mine.encodeFrame(accept), seq: 2, ts: t(1), sig: "s" },
+    ];
+    const fold = await mine.foldContract(records, null, { contract: `0x${"ab".repeat(32)}` });
+    expect(fold.offer).toBeNull();
+    expect(fold.state).toBe("proposed");
+    expect(fold.steps.find((s) => s.step === "offer")?.reason).toContain("hashes to this contract id");
   });
 });

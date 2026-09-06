@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Button, Card, CopyButton, Note, Spinner, StatusChip, TextArea } from "@/components/ui";
@@ -10,6 +10,7 @@ import { signDraft } from "@/lib/keyring";
 import { getClient } from "@/lib/client";
 import {
   OFFERS_ROOM,
+  contractId,
   decodeFrame,
   dealRoom,
   encodeFrame,
@@ -24,7 +25,9 @@ import {
   paperNote,
   decodePaperRecord,
   shortContract,
+  type AcceptFrame,
   type FoldResult,
+  type OfferFrame,
   type PaperRecord,
   type RecordInput,
 } from "@/lib/tclk-deal";
@@ -38,31 +41,80 @@ interface Board {
   loaded: boolean;
   error: string | null;
   at: number;
+  localFallback: boolean;
 }
+
+type PairState =
+  | { status: "loading" }
+  | { status: "found"; offer: OfferFrame; offerRecord: RecordInput; accept: AcceptFrame; acceptRecord: RecordInput }
+  | { status: "notfound" }
+  | { status: "error"; error: string };
 
 export default function DealDetailPage() {
   const params = useParams<{ contract: string }>();
   const contract = decodeURIComponent(params.contract);
   const { did } = useSession();
-  const [board, setBoard] = useState<Board>({ records: [], paper: null, paperRaw: null, loaded: false, error: null, at: 0 });
+  const [board, setBoard] = useState<Board>({
+    records: [],
+    paper: null,
+    paperRaw: null,
+    loaded: false,
+    error: null,
+    at: 0,
+    localFallback: false,
+  });
   const [fold, setFold] = useState<FoldResult | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [workText, setWorkText] = useState("");
   const [deal] = useState<DealRecord | null>(() => findDeal(contract));
+  const pairRef = useRef<PairState>({ status: "loading" });
+  const [pairState, setPairState] = useState<PairState>({ status: "loading" });
 
   const dealRoomName = dealRoom(contract);
+  const validContract = dealRoomName !== null;
   const offer = fold?.offer ?? null;
   const accept = fold?.accept ?? null;
   const paper = board.paper;
   const isPayer = did !== null && offer !== null && did === offer.from;
   const isPayee = did !== null && accept !== null && did === accept.from;
 
-  const refresh = useCallback(() => {
-    if (!dealRoomName) return;
+  /**
+   * Find this contract's offer+accept pair on the board. The room is busy and
+   * a rolling ring, so we never read "the first offer in the tail" — the
+   * server scans the retained ring export and matches by the recomputed
+   * contract id, or honestly reports that it is not there.
+   */
+  const loadPair = useCallback(() => {
+    if (!validContract) return;
+    void fetch(`/api/tc/deal-lookup?contract=${encodeURIComponent(contract)}`)
+      .then((res) => res.json() as Promise<{ found?: boolean; error?: string; offer?: OfferFrame; offerRecord?: RecordInput; accept?: AcceptFrame; acceptRecord?: RecordInput }>)
+      .then((data) => {
+        let next: PairState;
+        if (data.found && data.offer && data.offerRecord && data.accept && data.acceptRecord) {
+          next = { status: "found", offer: data.offer, offerRecord: data.offerRecord, accept: data.accept, acceptRecord: data.acceptRecord };
+        } else {
+          next = { status: "notfound" };
+        }
+        pairRef.current = next;
+        setPairState(next);
+      })
+      .catch((e: unknown) => {
+        const next: PairState = { status: "error", error: (e as Error).message };
+        pairRef.current = next;
+        setPairState(next);
+      });
+  }, [contract, validContract]);
+
+  /**
+   * The deal room + paper rail are append-only and stable, so this is safe to
+   * re-read every 30s. The offer/accept pair is fetched once (and on Refresh)
+   * — it never changes after the accept.
+   */
+  const readBoard = useCallback(() => {
+    if (!validContract || !dealRoomName) return;
     const client = getClient();
     const job = Promise.all([
-      client.readRoom(OFFERS_ROOM, { limit: 200 }).catch(() => null),
       client.readRoom(dealRoomName, { limit: 200 }).catch(() => null),
       (async () => {
         try {
@@ -74,10 +126,29 @@ export default function DealDetailPage() {
         }
       })(),
     ]);
-    void job.then(([offersRoom, dealRoomRead, paperRaw]) => {
+    void job.then(async ([dealRoomRead, paperRaw]) => {
+      const pair = pairRef.current;
       const records: RecordInput[] = [];
-      for (const m of offersRoom?.messages ?? []) {
-        records.push({ room: OFFERS_ROOM, from: m.from, text: m.text, seq: m.seq, ts: m.ts, sig: m.sig });
+      let localFallback = false;
+      if (pair.status === "found") {
+        records.push(pair.offerRecord, pair.acceptRecord);
+      } else if (deal?.accept) {
+        // Offline / scrolled-out fallback: trust the local copy only if it
+        // really hashes to THIS contract id.
+        const computed = await contractId(deal.offer, {
+          from: deal.accept.from,
+          ref: deal.accept.ref,
+          statement: deal.accept.statement,
+          paymentKey: deal.accept.paymentKey,
+          nonce: deal.accept.nonce,
+        });
+        if (computed.toLowerCase() === contract.toLowerCase()) {
+          records.push(
+            deal.offerRecord ?? { room: OFFERS_ROOM, from: deal.offer.from, text: encodeFrame(deal.offer), seq: 0, ts: "", sig: undefined },
+            deal.acceptRecord ?? { room: OFFERS_ROOM, from: deal.accept.from, text: encodeFrame(deal.accept), seq: 0, ts: "", sig: undefined },
+          );
+          localFallback = true;
+        }
       }
       for (const m of dealRoomRead?.messages ?? []) {
         records.push({ room: dealRoomName, from: m.from, text: m.text, seq: m.seq, ts: m.ts, sig: m.sig });
@@ -87,27 +158,35 @@ export default function DealDetailPage() {
         paper: paperRaw ? decodePaperRecord(paperRaw) : null,
         paperRaw,
         loaded: true,
-        error: null,
+        error: pair.status === "error" ? `Could not read the board: ${pair.error}` : null,
         at: nowMs(),
+        localFallback,
       });
     });
-  }, [contract, dealRoomName]);
+  }, [contract, dealRoomName, validContract, deal]);
 
   useEffect(() => {
-    refresh();
-    const t = setInterval(refresh, 30_000);
+    loadPair();
+    readBoard();
+    const t = setInterval(readBoard, 30_000);
     return () => clearInterval(t);
-  }, [refresh]);
+  }, [loadPair, readBoard]);
 
   useEffect(() => {
+    if (pairState.status === "loading") return;
+    readBoard();
+  }, [pairState, readBoard]);
+
+  useEffect(() => {
+    if (!validContract) return;
     let cancelled = false;
-    void foldContract(board.records, board.paper).then((f) => {
+    void foldContract(board.records, board.paper, { contract }).then((f) => {
       if (!cancelled) setFold(f);
     });
     return () => {
       cancelled = true;
     };
-  }, [board, did]);
+  }, [board, contract, validContract]);
 
   const postTo = async (room: string, text: string) => {
     const draft = signDraft(room, text);
@@ -142,7 +221,7 @@ export default function DealDetailPage() {
       }
       rememberPosted({ kind: "paper", contract, at: nowMs(), detail: `tclk-paper-${ns.slice(-2)}/${key}` });
       setActionMsg({ ok: true, text: `Paper rail record written to kv/${ns}/${key}. Now post the lock — it names the full contract id.` });
-      refresh();
+      readBoard();
     } catch (e) {
       setActionMsg({ ok: false, text: (e as Error).message });
     } finally {
@@ -176,7 +255,7 @@ export default function DealDetailPage() {
       if (deal) patchDeal(contract, { lock: frame });
       rememberPosted({ kind: "lock", contract, at: nowMs(), detail: "lock frame in deal room" });
       setActionMsg({ ok: true, text: "Lock posted. The payee now submits the work and reveals." });
-      refresh();
+      readBoard();
     } catch (e) {
       setActionMsg({ ok: false, text: (e as Error).message });
     } finally {
@@ -194,7 +273,7 @@ export default function DealDetailPage() {
       rememberPosted({ kind: "work", contract, at: nowMs(), detail: "deliverable message in deal room" });
       setActionMsg({ ok: true, text: "Your deliverable is on the board. Now reveal the secret to claim the deal." });
       setWorkText("");
-      refresh();
+      readBoard();
     } catch (e) {
       setActionMsg({ ok: false, text: (e as Error).message });
     } finally {
@@ -228,7 +307,7 @@ export default function DealDetailPage() {
       }
       rememberPosted({ kind: "reveal", contract, at: nowMs(), detail: "reveal frame in deal room" });
       setActionMsg({ ok: true, text: "Revealed. The deal is claimed on the board and the paper record now says claimed. Publish the receipt to finish." });
-      refresh();
+      readBoard();
     } catch (e) {
       setActionMsg({ ok: false, text: (e as Error).message });
     } finally {
@@ -245,7 +324,7 @@ export default function DealDetailPage() {
       await postTo(dealRoomName, encodeFrame(frame));
       rememberPosted({ kind: "refund", contract, at: nowMs(), detail: "refund frame in deal room" });
       setActionMsg({ ok: true, text: "Refund posted — the deal is refunded." });
-      refresh();
+      readBoard();
     } catch (e) {
       setActionMsg({ ok: false, text: (e as Error).message });
     } finally {
@@ -262,7 +341,7 @@ export default function DealDetailPage() {
       await postTo(dealRoomName, encodeFrame(frame));
       rememberPosted({ kind: "cancel", contract, at: nowMs(), detail: "cancel frame in deal room" });
       setActionMsg({ ok: true, text: "Cancelled before any lock — the deal is closed." });
-      refresh();
+      readBoard();
     } catch (e) {
       setActionMsg({ ok: false, text: (e as Error).message });
     } finally {
@@ -282,7 +361,7 @@ export default function DealDetailPage() {
       if (deal) patchDeal(contract, { receipt: frame });
       rememberPosted({ kind: "receipt", contract, at: nowMs(), detail: `receipt ${outcome}` });
       setActionMsg({ ok: true, text: `Receipt published (${outcome}). Anyone can open /deal/receipt/${contract} and verify it.` });
-      refresh();
+      readBoard();
     } catch (e) {
       setActionMsg({ ok: false, text: (e as Error).message });
     } finally {
@@ -300,8 +379,18 @@ export default function DealDetailPage() {
       <p className="caption-sm text-mute">Deal · tclk/1</p>
       <div className="mt-2 flex flex-wrap items-center gap-3">
         <h1 className="display-lg">{shortContract(contract)}</h1>
-        <StatusChip tone={fold?.state === "claimed" ? "ok" : fold?.state === "refunded" || fold?.state === "cancelled" ? "warn" : "empty"}>
-          {fold?.state ?? "reading"}
+        <StatusChip
+          tone={
+            fold?.state === "claimed"
+              ? "ok"
+              : fold?.state === "refunded" || fold?.state === "cancelled"
+                ? "warn"
+                : pairState.status === "notfound"
+                  ? "warn"
+                  : "empty"
+          }
+        >
+          {pairState.status === "notfound" ? "not found on board" : fold?.state ?? "reading"}
         </StatusChip>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-3">
@@ -312,10 +401,27 @@ export default function DealDetailPage() {
         >
           Public receipt →
         </Link>
-        <Button variant="secondary" onClick={refresh} className="shrink-0">
+        <Button
+          variant="secondary"
+          onClick={() => {
+            loadPair();
+            readBoard();
+          }}
+          className="shrink-0"
+        >
           {board.loaded ? "Refresh" : <Spinner label="Reading…" />}
         </Button>
       </div>
+
+      {!validContract ? (
+        <div className="mt-6">
+          <Note tone="error">
+            This is not a valid tclk contract id (it must be 0x followed by 64 hex digits). The link is
+            incomplete or mistyped — open the deal from <span className="font-mono">Your deals</span> on{" "}
+            <Link className="font-medium text-ink underline underline-offset-2" href="/deal">/deal</Link>.
+          </Note>
+        </div>
+      ) : null}
 
       {!did ? (
         <div className="mt-6">
@@ -331,15 +437,34 @@ export default function DealDetailPage() {
       {did && offer && !isPayer && !isPayee ? (
         <div className="mt-6">
           <Note tone="warn">
-            <strong className="font-medium text-ink">This is not your deal yet.</strong>{" "}
-            You are signed in as <span className="font-mono">{identityShortName(did)}</span>, but this deal&apos;s
-            parties are <span className="font-mono">payer {shortDid(offer.from)}</span> and{" "}
-            {accept ? <span className="font-mono">payee {shortDid(accept.from)}</span> : "the accept is still incoming"}.
-            To act on it, unlock the identity that posted or accepted it: open{" "}
-            <Link className="font-medium text-ink underline underline-offset-2" href="/create">/create</Link>,
-            unlock the stored copy (or import the file), then come back here.
+            <strong className="font-medium text-ink">This is not your deal.</strong>{" "}
+            You are signed in as <span className="font-mono">{identityShortName(did)}</span>
+            {accept ? (
+              <>
+                , but this deal&apos;s parties are <span className="font-mono">payer {identityShortName(offer.from)}</span>{" "}
+                and <span className="font-mono">payee {identityShortName(accept.from)}</span> — these are{" "}
+                <em>different identities</em>. The one that posted or accepted this deal is not unlocked right now.
+              </>
+            ) : (
+              <> — the accept is still incoming, and the payer is <span className="font-mono">{identityShortName(offer.from)}</span>.</>
+            )}{" "}
+            To act on it, unlock the matching identity: open{" "}
+            <Link className="font-medium text-ink underline underline-offset-2" href="/create">/create</Link> and unlock the
+            stored copy (or import the file), then come back here. If you expected to be signed in as{" "}
+            <span className="font-mono">{accept ? identityShortName(accept.from) : ""}</span>, this browser is holding a
+            different saved identity — the last one created or unlocked here is what auto-unlocks.
           </Note>
           <NextSteps />
+        </div>
+      ) : null}
+
+      {board.localFallback ? (
+        <div className="mt-4">
+          <Note tone="warn">
+            Showing the offer and accept from <strong className="font-medium text-ink">your local copy</strong> — the public
+            pair was not found in the retained ring of tclk-offers (the venue keeps only the newest ~10 MiB). The deal
+            room and paper rail below are still read live from the board.
+          </Note>
         </div>
       ) : null}
 
@@ -554,10 +679,6 @@ function fmtMs(ms: number): string {
 
 function nowMs(): number {
   return Date.now();
-}
-
-function shortDid(did: string): string {
-  return `${did.slice(0, 12)}…${did.slice(-8)}`;
 }
 
 function NextSteps() {

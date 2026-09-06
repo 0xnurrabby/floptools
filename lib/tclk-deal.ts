@@ -199,6 +199,48 @@ export async function contractId(offer: OfferFrame, accept: AcceptCore): Promise
   return domainHash("contract", canonicalJson({ offer, accept }));
 }
 
+/**
+ * Locate the ONE offer+accept pair whose recomputed contract id equals
+ * `contract`. `tclk-offers` is a world-writable room that is busy and a
+ * rolling ring (the venue retains only the newest ~10 MiB, and a plain read
+ * returns only the tail), so a deal page must never trust "the first offer in
+ * the tail" — it must match by the contract id itself, or fail honestly.
+ */
+export async function findDealPair(
+  records: RecordInput[],
+  contract: string,
+): Promise<{ offer: OfferFrame; offerRecord: RecordInput; accept: AcceptFrame; acceptRecord: RecordInput } | null> {
+  if (!CONTRACT_ID.test(contract)) return null;
+  const offers: { record: RecordInput; frame: OfferFrame }[] = [];
+  const acceptsByRef = new Map<string, { record: RecordInput; frame: AcceptFrame }[]>();
+  for (const r of records) {
+    if (r.room !== OFFERS_ROOM) continue;
+    const frame = decodeFrame(r.text);
+    if (!frame) continue;
+    if (frame.type === "offer") offers.push({ record: r, frame });
+    else if (frame.type === "accept") {
+      const list = acceptsByRef.get(frame.ref) ?? [];
+      list.push({ record: r, frame });
+      acceptsByRef.set(frame.ref, list);
+    }
+  }
+  for (const o of offers) {
+    for (const a of acceptsByRef.get(o.frame.id) ?? []) {
+      const computed = await contractId(o.frame, {
+        from: a.frame.from,
+        ref: a.frame.ref,
+        statement: a.frame.statement,
+        paymentKey: a.frame.paymentKey,
+        nonce: a.frame.nonce,
+      });
+      if (computed.toLowerCase() === contract.toLowerCase()) {
+        return { offer: o.frame, offerRecord: o.record, accept: a.frame, acceptRecord: a.record };
+      }
+    }
+  }
+  return null;
+}
+
 /* ---------- validation (fail-closed, SPEC.md §3) ---------- */
 
 export function isValidStatement(lock: LockKind, statement: string): boolean {
@@ -508,6 +550,19 @@ export function paperNote(contract: string): { ns: string; key: string } {
 
 /* ---------- state machine (SPEC.md §4, fail-closed) ---------- */
 
+/** Deduplicate room records by (room, seq) — a folded board must be stable. */
+export function dedupeRecords(records: RecordInput[]): RecordInput[] {
+  const seen = new Set<string>();
+  const out: RecordInput[] = [];
+  for (const r of records) {
+    const key = `${r.room}:${r.seq}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(r);
+  }
+  return out;
+}
+
 export interface RecordInput {
   room: string;
   from: string;
@@ -545,33 +600,41 @@ export interface FoldResult {
 export async function foldContract(
   records: RecordInput[],
   paper: PaperRecord | null,
-  opts: { now?: number } = {},
+  opts: { contract?: string; now?: number } = {},
 ): Promise<FoldResult> {
-  const now = opts.now ?? Date.now();
+  const unique = dedupeRecords(records);
 
-  const offers = records
-    .filter((r) => r.room === OFFERS_ROOM)
-    .map((r) => ({ record: r, frame: decodeFrame(r.text) }))
-    .filter((x): x is { record: RecordInput; frame: OfferFrame } => x.frame?.type === "offer");
-  const offerEntry = offers[0] ?? null;
-  const offer = offerEntry?.frame ?? null;
-  const offerRecord = offerEntry?.record ?? null;
+  let offer: OfferFrame | null = null;
+  let offerRecord: RecordInput | null = null;
+  let accept: AcceptFrame | null = null;
+  let acceptRecord: RecordInput | null = null;
+  let pairReason: string | null = null;
 
-  const accepts = records
-    .filter((r) => r.room === OFFERS_ROOM)
-    .map((r) => ({ record: r, frame: decodeFrame(r.text) }))
-    .filter((x): x is { record: RecordInput; frame: AcceptFrame } => x.frame?.type === "accept")
-    .filter((x) => offer !== null && x.frame.ref === offer.id);
-  const acceptEntry = accepts[0] ?? null;
-  const accept = acceptEntry?.frame ?? null;
-  const acceptRecord = acceptEntry?.record ?? null;
+  if (opts.contract) {
+    if (!CONTRACT_ID.test(opts.contract)) {
+      pairReason = "This is not a valid tclk contract id (0x + 64 hex).";
+    } else {
+      const pair = await findDealPair(unique, opts.contract);
+      if (pair) {
+        offer = pair.offer;
+        offerRecord = pair.offerRecord;
+        accept = pair.accept;
+        acceptRecord = pair.acceptRecord;
+      } else {
+        pairReason =
+          "No offer+accept pair on the retained board hashes to this contract id. It may have scrolled out of the venue ring (only the newest ~10 MiB of tclk-offers is kept), or the id is not this deal's.";
+      }
+    }
+  } else {
+    pairReason = "A contract id is required to fold a deal.";
+  }
 
-  const dealRecords = records
+  const dealRecords = unique
     .filter((r) => r.room !== OFFERS_ROOM)
     .sort((a, b) => (a.ts === b.ts ? a.seq - b.seq : a.ts < b.ts ? -1 : 1));
 
   let state: DealState = offer ? "proposed" : "proposed";
-  let stateReason: string | null = null;
+  let stateReason: string | null = pairReason;
   let lock: LockFrame | null = null;
   let reveal: RevealFrame | null = null;
   let refund: RefundFrame | null = null;
@@ -580,17 +643,20 @@ export async function foldContract(
   const workMessages: RecordInput[] = [];
 
   if (offer) {
-    // accept guard
+    // accept guard (SPEC §4: missing/malformed time fails closed)
     if (accept) {
-      const acceptTs = acceptRecord ? new Date(acceptRecord.ts).getTime() : now;
+      const acceptTs = acceptRecord ? new Date(acceptRecord.ts).getTime() : Number.NaN;
       const validAccept =
         accept.from !== offer.from &&
         isValidStatement(offer.lock, accept.statement) &&
-        (Number.isNaN(acceptTs) ? true : acceptTs < offer.expiresMs);
+        !Number.isNaN(acceptTs) &&
+        acceptTs < offer.expiresMs;
       if (validAccept) {
         state = "accepted";
       } else {
-        stateReason = "acceptance failed its guard";
+        stateReason = Number.isNaN(acceptTs)
+          ? "acceptance time is missing or malformed — fails closed"
+          : "acceptance failed its guard";
       }
     }
     for (const r of dealRecords) {
@@ -600,12 +666,12 @@ export async function foldContract(
       if (frame.type === "lock") {
         if (state === "accepted" && frame.from === offer.from && offer.rails.includes(frame.rail)) {
           const ts = new Date(r.ts).getTime();
-          const beforeRefund = Number.isNaN(ts) ? true : ts < offer.refundAfterMs;
+          const beforeRefund = !Number.isNaN(ts) && ts < offer.refundAfterMs;
           if (beforeRefund) {
             lock = frame;
             state = "locked";
           } else {
-            stateReason = "lock came after refundAfterMs";
+            stateReason = Number.isNaN(ts) ? "lock time is missing or malformed — fails closed" : "lock came after refundAfterMs";
           }
         } else {
           stateReason = "lock failed its guard";
@@ -613,20 +679,24 @@ export async function foldContract(
       } else if (frame.type === "reveal") {
         if (state === "locked" && accept && frame.from === accept.from) {
           const ts = new Date(r.ts).getTime();
-          const beforeRefund = Number.isNaN(ts) ? true : ts < offer.refundAfterMs;
+          const beforeRefund = !Number.isNaN(ts) && ts < offer.refundAfterMs;
           const refOk = frame.ref === undefined || (lock !== null && frame.ref === lock.ref);
           const secretOk = await verifySecret(offer.lock, accept.statement, frame.secret);
           if (beforeRefund && refOk && secretOk) {
             reveal = frame;
             state = "claimed";
           } else {
-            stateReason = secretOk ? "reveal failed its guard" : "reveal secret does not open the statement";
+            stateReason = Number.isNaN(ts)
+              ? "reveal time is missing or malformed — fails closed"
+              : secretOk
+                ? "reveal failed its guard"
+                : "reveal secret does not open the statement";
           }
         }
       } else if (frame.type === "refund") {
         if (state === "locked" && frame.from === offer.from) {
           const ts = new Date(r.ts).getTime();
-          const atRefund = Number.isNaN(ts) ? true : ts >= offer.refundAfterMs;
+          const atRefund = !Number.isNaN(ts) && ts >= offer.refundAfterMs;
           if (atRefund) {
             refund = frame;
             state = "refunded";
@@ -654,10 +724,10 @@ export async function foldContract(
 
   const steps: StepStatus[] = [];
   steps.push(
-    stepRow("offer", "Offer posted", !!offer, offerRecord ? tsLabel(offerRecord.ts) : undefined, offer ? undefined : "No offer found in tclk-offers."),
+    stepRow("offer", "Offer posted", !!offer, offerRecord ? tsLabel(offerRecord.ts) : undefined, offer ? undefined : pairReason ?? "No offer found in tclk-offers."),
   );
   steps.push(
-    stepRow("accept", "Accepted", !!accept, acceptRecord ? tsLabel(acceptRecord.ts) : undefined, !offer ? "Waiting for an offer." : !accept ? "Waiting for the other side to accept." : undefined),
+    stepRow("accept", "Accepted", !!accept, acceptRecord ? tsLabel(acceptRecord.ts) : undefined, !offer ? pairReason ?? "Waiting for an offer." : !accept ? "Waiting for the other side to accept." : undefined),
   );
   steps.push(
     stepRow("paper", "Paper record on the rail", paper !== null, paper ? undefined : "The rail record must exist at kv/tclk-paper-<hh>/<key> before the lock.", !paper ? "Not written yet." : undefined),

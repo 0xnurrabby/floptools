@@ -16,8 +16,11 @@ import {
   makeAccept,
   makeOffer,
   shortContract,
+  type AcceptFrame,
   type OfferFrame,
+  type RecordInput,
 } from "@/lib/tclk-deal";
+import type { TcMessage } from "@/lib/technocore";
 import {
   getDealsSnapshot,
   saveDeal,
@@ -147,6 +150,7 @@ export default function DealPage() {
         offer,
         offerId: offer.id,
         statement: "",
+        ...(res.posted ? { offerRecord: recordFromPosted(OFFERS_ROOM, res.posted) } : {}),
         createdAt: nowMs(),
       });
       rememberPosted({ kind: "offer", contract: "", at: nowMs(), detail: "offer in tclk-offers" });
@@ -163,19 +167,29 @@ export default function DealPage() {
   const checkAcceptance = async (deal: DealRecord) => {
     setAcceptError(null);
     try {
-      const room = await getClient().readRoom(OFFERS_ROOM, { limit: 200 });
-      const acceptFrame = room.messages
-        .map((m) => ({ m, f: decodeFrame(m.text) }))
-        .find((x) => x.f?.type === "accept" && (x.f as { ref?: string }).ref === deal.offerId)?.f;
-      if (!acceptFrame || acceptFrame.type !== "accept") {
-        setAcceptError("Not accepted yet. Keep the offer public — check again later.");
+      const res = await fetch(`/api/tc/deal-lookup?offerId=${encodeURIComponent(deal.offerId)}`);
+      const data = (await res.json()) as {
+        found?: boolean;
+        error?: string;
+        accept?: AcceptFrame;
+        acceptRecord?: RecordInput;
+      };
+      if (!res.ok) {
+        setAcceptError(data.error ?? `Lookup failed (HTTP ${res.status}).`);
+        return;
+      }
+      if (!data.found || !data.accept) {
+        setAcceptError(
+          "Not accepted yet — or the accept has scrolled out of the venue ring (tclk-offers keeps only the newest ~10 MiB). Post a fresh offer if it has been a while.",
+        );
         return;
       }
       patchDealByOfferId(deal.offerId, {
-        contract: acceptFrame.contract,
-        accept: acceptFrame,
+        contract: data.accept.contract,
+        accept: data.accept,
+        ...(data.acceptRecord ? { acceptRecord: data.acceptRecord } : {}),
       });
-      router.push(`/deal/${encodeURIComponent(acceptFrame.contract)}`);
+      router.push(`/deal/${encodeURIComponent(data.accept.contract)}`);
     } catch (e) {
       setAcceptError((e as Error).message);
     }
@@ -208,6 +222,7 @@ export default function DealPage() {
         accept,
         preimage,
         statement: hash,
+        ...(res.posted ? { acceptRecord: recordFromPosted(OFFERS_ROOM, res.posted) } : {}),
         createdAt: nowMs(),
       });
       rememberPosted({ kind: "accept", contract: accept.contract, at: nowMs(), detail: "accept in tclk-offers" });
@@ -325,7 +340,7 @@ export default function DealPage() {
               </span>
               <div>
                 <h2 className="heading-md">Open offers on the board</h2>
-                <p className="caption-sm text-body">Accept one, mint a secret, and the deal room is derived for both of you.</p>
+                <p className="caption-sm text-body">The newest ~200 offers in tclk-offers. Accept one, mint a secret, and the deal room is derived for both of you.</p>
               </div>
             </div>
             <Button variant="secondary" onClick={loadOffers} disabled={offersBusy} className="shrink-0">
@@ -431,6 +446,10 @@ export default function DealPage() {
 function offerNonce(): string {
   const arr = crypto.getRandomValues(new Uint8Array(4));
   return [...arr].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function recordFromPosted(room: string, m: TcMessage): RecordInput {
+  return { room, from: m.from, text: m.text, seq: m.seq, ts: m.ts, sig: m.sig };
 }
 
 function nowMs(): number {
