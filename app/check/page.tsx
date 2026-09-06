@@ -13,6 +13,7 @@ import {
   TextInput,
 } from "@/components/ui";
 import { useSession } from "@/components/use-session";
+import { UnlockIdentity } from "@/components/unlock";
 import { getClient, TECHNOBASE } from "@/lib/client";
 import { checkDid, verifyRecord, type DidCheckResult, type RecordVerification } from "@/lib/check";
 
@@ -154,10 +155,14 @@ export default function CheckPage() {
       <h1 className="display-lg mt-2">Check any did:key</h1>
       <p className="body-md mt-3 max-w-xl text-body">
         Paste a <code className="rounded-sm bg-surface-soft px-1.5 py-0.5 font-mono text-[13px]">did:key:z6Mk…</code>: all
-        reads are public.
+        reads are public. Unlock your own identity below to auto-check it.
       </p>
 
-      <div className="mt-8 max-w-2xl">
+      <div className="mt-6">
+        <UnlockIdentity />
+      </div>
+
+      <div className="mt-6 max-w-2xl">
         <div className="flex flex-col gap-2 sm:flex-row">
           <TextInput
             value={did}

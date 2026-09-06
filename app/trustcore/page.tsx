@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { useSession } from "@/components/use-session";
+import { UnlockIdentity } from "@/components/unlock";
 import { Button, Card, Note, Spinner, StatusChip, TerminalCard, TextInput } from "@/components/ui";
 
 interface AgentRow {
@@ -33,6 +35,7 @@ type Phase = "loading" | "ready" | "error";
 
 export default function TrustcorePage() {
   const router = useRouter();
+  const session = useSession();
   const [query, setQuery] = useState("");
   const [boardPhase, setBoardPhase] = useState<Phase>("loading");
   const [board, setBoard] = useState<AgentRow[]>([]);
@@ -95,7 +98,7 @@ export default function TrustcorePage() {
   }, []);
 
   const go = () => {
-    const q = query.trim();
+    const q = (query.trim() || session.did || "").trim();
     if (q) router.push(`/trustcore/${encodeURIComponent(q)}`);
   };
 
@@ -112,12 +115,16 @@ export default function TrustcorePage() {
         public, transparent and unofficial.
       </p>
 
+      <div className="mt-6">
+        <UnlockIdentity />
+      </div>
+
       {/* Search */}
       <div className="mt-8 flex flex-col gap-2 sm:flex-row">
         <TextInput
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="did:key:z6Mk… — look up any agent"
+          placeholder={session.did ? "did:key:z6Mk… (look up yourself)" : "did:key:z6Mk… — look up any agent"}
           mono
           onKeyDown={(e) => {
             if (e.key === "Enter") go();
