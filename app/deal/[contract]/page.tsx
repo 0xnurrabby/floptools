@@ -71,6 +71,7 @@ export default function DealDetailPage() {
   const lastDealSeqRef = useRef(0);
   const bestFoldRef = useRef<FoldResult | null>(null);
   const mirrorPostedRef = useRef(false);
+  const roomRememberedRef = useRef(false);
   const [refreshing, setRefreshing] = useState(false);
   const [regressed, setRegressed] = useState(false);
 
@@ -206,6 +207,21 @@ export default function DealDetailPage() {
     if (pairState.status === "loading") return;
     void readBoard();
   }, [pairState, readBoard]);
+
+  /**
+   * Tell Trustcore this deal room exists (once), so its lock/reveal/receipt
+   * frames are scanned even after the offer+accept leaves the tclk-offers
+   * tail. Stores only the room name — never frames, never keys.
+   */
+  useEffect(() => {
+    if (!dealRoomName || roomRememberedRef.current) return;
+    roomRememberedRef.current = true;
+    void fetch("/api/trustcore/rooms", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ room: dealRoomName }),
+    }).catch(() => {});
+  }, [dealRoomName]);
 
   useEffect(() => {
     if (!validContract) return;
@@ -493,6 +509,9 @@ export default function DealDetailPage() {
       rememberPosted({ kind: "receipt", contract, at: nowMs(), detail: `receipt ${outcome}` });
       setActionMsg({ ok: true, text: `Receipt published (${outcome}). Anyone can open /deal/receipt/${contract} and verify it.` });
       void readBoard();
+      // Refresh the Trustcore board so the finished deal counts right away
+      // (fire-and-forget; the venue holds the frames while they still exist).
+      void fetch("/api/trustcore/ingest", { method: "POST" }).catch(() => {});
     } catch (e) {
       setActionMsg({ ok: false, text: (e as Error).message });
     } finally {
@@ -504,6 +523,31 @@ export default function DealDetailPage() {
     ? nextGuard(fold, paper, { myDid: did ?? "" })
     : { action: "reading the board", blocked: true, reason: "Loading the public rooms…" };
   const refundDue = !!offer && board.at > 0 && board.at >= offer.refundAfterMs;
+
+  const terminal = (() => {
+    if (fold?.state === "claimed") {
+      const amount = offer ? `${offer.amount} ${offer.asset}` : "";
+      return {
+        title: "Deal complete",
+        text: fold.receipt
+          ? `The contract is claimed and the receipt is published.${amount ? ` ${amount} settled.` : ""} Anyone can verify it with the public receipt link above.`
+          : `The secret was revealed — the contract is claimed.${amount ? ` ${amount} belongs to the payee.` : ""} Publish the receipt to finish.`,
+      };
+    }
+    if (fold?.state === "refunded") {
+      return {
+        title: "Deal refunded",
+        text: "The refund window opened and the payer reclaimed — no claim was made.",
+      };
+    }
+    if (fold?.state === "cancelled") {
+      return {
+        title: "Deal cancelled",
+        text: "A cancel frame ended this deal before any lock — nothing moved.",
+      };
+    }
+    return null;
+  })();
 
   /**
    * The one action this identity can take right now, per timeline step. The
@@ -699,6 +743,21 @@ export default function DealDetailPage() {
       {board.error ? <div className="mt-4"><Note tone="error">{board.error}</Note></div> : null}
       {actionMsg ? (
         <div className="mt-4"><Note tone={actionMsg.ok ? "ok" : "error"}>{actionMsg.text}</Note></div>
+      ) : null}
+
+      {/* Terminal outcome — the plain-language "this deal is done" moment */}
+      {terminal ? (
+        <section className="mt-6">
+          <Card className={fold?.state === "claimed" ? "border-leaf-600/30" : "border-amber-600/30"}>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="body-sm-strong text-ink">{terminal.title}</p>
+                <p className="caption-sm mt-1 text-body">{terminal.text}</p>
+              </div>
+              <StatusChip tone={fold?.state === "claimed" ? "ok" : "warn"}>{fold?.state}</StatusChip>
+            </div>
+          </Card>
+        </section>
       ) : null}
 
       {/* Timeline */}

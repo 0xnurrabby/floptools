@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ingestNow, isStale } from "@/lib/trustcore-ingest";
+import { ingestIfStale } from "@/lib/trustcore-ingest";
 import { safeQuery } from "@/lib/db";
 import { framesForDid } from "@/lib/trustcore-db";
 import { computeAgentMetrics, NEUTRAL_SCORE, TIER_LABEL } from "@/lib/trustscore";
@@ -23,10 +23,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "invalid did:key" }, { status: 400 });
   }
 
-  // Fast paint: never block on a cold scan; kick it off and report scanning.
+  // Fast paint: never block on a scan; kick it off when stale (cold DB or
+  // warm-but-outdated) and report scanning.
   const counters = (await safeQueryFrameCount()) ?? 0;
-  const scanning = counters === 0 && isStale();
-  if (scanning) void ingestNow();
+  const scanning = counters === 0;
+  void ingestIfStale();
 
   const frames = await framesForDid(did);
   const metrics = computeAgentMetrics(did, frames);

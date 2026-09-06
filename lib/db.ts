@@ -116,6 +116,23 @@ export async function ensureSchema(): Promise<void> {
     await p.query(`CREATE INDEX IF NOT EXISTS idx_tc_frames_did ON trustcore_frames (did)`);
     await p.query(`CREATE INDEX IF NOT EXISTS idx_tc_frames_contract ON trustcore_frames (contract_id)`);
     await p.query(`CREATE INDEX IF NOT EXISTS idx_tc_frames_created ON trustcore_frames (created_at)`);
+    // Deal rooms the app has seen — Trustcore scans these so a deal's
+    // lock/reveal/receipt frames are picked up even after the offer+accept
+    // scrolls out of the tclk-offers tail.
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS trustcore_rooms (
+        room TEXT PRIMARY KEY,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    // Small key/value store for ingest bookkeeping (last successful scan time).
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS trustcore_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
     await p.query(`
       CREATE TABLE IF NOT EXISTS ip_geo (
         ip TEXT PRIMARY KEY,

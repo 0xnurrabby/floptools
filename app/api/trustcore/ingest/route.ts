@@ -7,7 +7,10 @@ import { clientIp } from "@/lib/server-ip";
  * POST /api/trustcore/ingest — manual "scan now" (bounded per IP).
  * Reads are done by the same read-only path as the rest of the app;
  * nothing here stores secrets, only public signed frames.
+ * The scan fetches the whole retained offers ring, so give it room.
  */
+
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   const ip = clientIp(req.headers);

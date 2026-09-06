@@ -858,7 +858,14 @@ export function nextGuard(
   if (!offer) return { action: "post offer", blocked: false, reason: "Create an offer first." };
   if (!accept) return { action: "wait for acceptance", blocked: true, reason: "Your offer is public in tclk-offers. Another identity accepts it with its own statement." };
   if (fold.state === "cancelled") return { action: "deal cancelled", blocked: true, reason: "A cancel frame ended this deal before any lock." };
-  if (fold.state === "claimed") return { action: "deal complete", blocked: true, reason: "Reveal published — the contract is claimed." };
+  if (fold.state === "claimed")
+    return {
+      action: "deal complete",
+      blocked: true,
+      reason: fold.receipt
+        ? "Receipt published — the contract is claimed and the deal is settled."
+        : "Reveal published — the contract is claimed. Publish the receipt to finish.",
+    };
   if (fold.state === "refunded") return { action: "deal refunded", blocked: true, reason: "The refund window opened and the payer reclaimed." };
   if (fold.state === "expired") {
     const at = offer?.expiresMs ? ` on ${tsLabel(new Date(offer.expiresMs).toISOString())}` : "";

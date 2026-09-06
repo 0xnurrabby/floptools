@@ -2,7 +2,7 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { Card, CopyButton, Note, StatusChip, TerminalCard } from "@/components/ui";
-import { isStale, ingestNow } from "@/lib/trustcore-ingest";
+import { ingestIfStale } from "@/lib/trustcore-ingest";
 import { safeQuery } from "@/lib/db";
 import { framesForDid } from "@/lib/trustcore-db";
 import { computeAgentMetrics, buildDealStates, TIER_LABEL, NEUTRAL_SCORE } from "@/lib/trustscore";
@@ -24,8 +24,10 @@ export default async function AgentProfilePage({ params }: { params: Promise<{ d
   // Fast paint: never block on a cold scan; kick it off and say so.
   const frameCountRows = (await safeQuery("SELECT COUNT(*) AS n FROM trustcore_frames")) ?? [];
   const frameCount = Number(frameCountRows[0]?.["n"] ?? 0);
-  const scanning = frameCount === 0 && isStale();
-  if (scanning) void ingestNow();
+  const scanning = frameCount === 0;
+  // Refresh from the public board whenever the last scan is stale (not only on
+  // a cold DB) — completed deals must show up even when the DB is warm.
+  void ingestIfStale();
 
   const frames = await framesForDid(did);
   const metrics = computeAgentMetrics(did, frames);

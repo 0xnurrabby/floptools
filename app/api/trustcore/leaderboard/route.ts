@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ingestNow, isStale } from "@/lib/trustcore-ingest";
+import { ingestIfStale } from "@/lib/trustcore-ingest";
 import { safeQuery } from "@/lib/db";
 import { buildDealStates, metricsFromStates, TIER_LABEL, type DealState } from "@/lib/trustscore";
 import { frameFromRow } from "@/lib/trustcore-db";
@@ -86,19 +86,17 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const frameCount = Number(realCounters?.["frames"] ?? 0);
   const agentsCount = Number(realCounters?.["agents"] ?? 0);
   const contractsCount = Number(realCounters?.["contracts"] ?? 0);
-  const stale = isStale();
 
-  if (frameCount === 0 && stale) {
-    // First visit: start scanning without blocking the response.
-    void ingestNow();
-  }
+  // Refresh from the public board whenever the last scan is stale (cold DB or
+  // warm-but-outdated) — completed deals must show up even on a warm DB.
+  void ingestIfStale();
 
   if (kind === "activity") {
     const limit = Math.min(60, Number(req.nextUrl.searchParams.get("limit")) || 30);
     const frames = await allFrames(limit);
     return NextResponse.json({
       ok: true,
-      scanning: frameCount === 0 && stale,
+      scanning: frameCount === 0,
       frames: frames.map((f) => ({
         type: f.type,
         did: f.did,
@@ -116,7 +114,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const limit = Math.min(50, Number(req.nextUrl.searchParams.get("limit")) || 25);
   const now = Date.now();
   if (!boardCache || now - boardCache.at > BOARD_TTL_MS) {
-    if (frameCount === 0 && stale) {
+    if (frameCount === 0) {
       boardCache = { at: now, board: [] }; // avoid rebuild-spam while cold
     } else {
       // Await only when there is already data (warm DB — fast), else compute
@@ -139,7 +137,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   return NextResponse.json({
     ok: true,
-    scanning: frameCount === 0 && stale,
+    scanning: frameCount === 0,
     counters: {
       frames: frameCount,
       agents: agentsCount,

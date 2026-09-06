@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  OFFERS_ROOM,
   contractId,
   decodeFrame,
   type AcceptFrame,
@@ -8,6 +7,7 @@ import {
   type RecordInput,
 } from "@/lib/tclk-deal";
 import { isValidDid } from "@/lib/didkey";
+import { fetchOffersExport, parseOffersExport } from "@/lib/offers-ring";
 
 /**
  * Locate a tclk/1 offer+accept pair on the public board by contract id (or
@@ -26,45 +26,11 @@ import { isValidDid } from "@/lib/didkey";
  * involved, marked no-store. This route reads public frames — it never signs.
  */
 
-const BASE = (
-  process.env.TECHNOCORE_BASE_URL ??
-  process.env.NEXT_PUBLIC_TECHNOCORE_BASE_URL ??
-  "https://technocore.chat"
-).replace(/\/+$/, "");
-
 const HEX64 = /^0x[0-9a-f]{64}$/;
 
 // The retained ring export is several MB and the venue is occasionally slow;
 // give the function room to fetch and scan it once.
 export const maxDuration = 60;
-
-// The venue's offers room is a busy ring; a plain tail read only covers a few
-// minutes of it. All lookup modes scan the full retained export, so cache the
-// body briefly (per instance) to keep refreshes cheap.
-let exportCache: { at: number; body: string } | null = null;
-
-async function fetchExportBody(): Promise<string> {
-  const now = Date.now();
-  if (exportCache && now - exportCache.at < 20_000) return exportCache.body;
-  let res: Response;
-  try {
-    res = await fetch(`${BASE}/r/${OFFERS_ROOM}/export`, {
-      cache: "no-store",
-      signal: AbortSignal.timeout(45000),
-      headers: { Accept: "text/plain;q=0.9, application/json;q=0.5" },
-    });
-  } catch {
-    throw new ExportError("could not reach the offers ring");
-  }
-  if (!res.ok) {
-    throw new ExportError(`upstream export failed (HTTP ${res.status})`);
-  }
-  const body = await res.text();
-  exportCache = { at: now, body };
-  return body;
-}
-
-class ExportError extends Error {}
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const contract = req.nextUrl.searchParams.get("contract");
@@ -81,30 +47,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ error: "did must be a valid did:key" }, { status: 400 });
   }
 
-  let body: string;
+  let records: RecordInput[];
   try {
-    body = await fetchExportBody();
+    records = parseOffersExport(await fetchOffersExport());
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "could not read the offers ring" }, { status: 502 });
-  }
-
-  const records: RecordInput[] = [];
-  for (const line of body.split("\n")) {
-    if (!line.trim()) continue;
-    try {
-      const m = JSON.parse(line) as { seq?: number; ts?: string; from?: string; text?: string; sig?: string };
-      if (typeof m?.text !== "string") continue;
-      records.push({
-        room: OFFERS_ROOM,
-        from: typeof m.from === "string" ? m.from : "",
-        text: m.text,
-        seq: typeof m.seq === "number" ? m.seq : 0,
-        ts: typeof m.ts === "string" ? m.ts : "",
-        ...(typeof m.sig === "string" ? { sig: m.sig } : {}),
-      });
-    } catch {
-      /* skip malformed line */
-    }
   }
 
   if (offersParam === "1") {

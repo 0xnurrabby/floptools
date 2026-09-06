@@ -2,7 +2,7 @@
  * Stored-frame access for Trustcore (Neon trustcore_frames).
  */
 
-import { safeQuery, type Row } from "./db";
+import { safeExec, safeQuery, type Row } from "./db";
 import type { TclkFrame } from "./tclk";
 
 export function frameFromRow(r: Row): TclkFrame {
@@ -48,6 +48,20 @@ export async function latestFrames(limit = 30): Promise<TclkFrame[]> {
     [limit],
   )) ?? [];
   return rows.map(frameFromRow);
+}
+
+/** Remember a deal room so future ingests scan it (idempotent). */
+export async function rememberDealRoom(room: string): Promise<void> {
+  await safeExec("INSERT INTO trustcore_rooms (room) VALUES ($1) ON CONFLICT (room) DO NOTHING", [room]);
+}
+
+/** Deal rooms the app has seen, newest first (these are the ones most likely to still be retained). */
+export async function knownDealRooms(limit = 500): Promise<string[]> {
+  const rows = (await safeQuery(
+    `SELECT room FROM trustcore_rooms ORDER BY created_at DESC LIMIT $1`,
+    [limit],
+  )) ?? [];
+  return rows.map((r) => String(r["room"]));
 }
 
 export async function counterStats(): Promise<{ frames: number; agents: number; contracts: number }> {
