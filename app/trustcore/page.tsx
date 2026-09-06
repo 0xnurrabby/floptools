@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useSession } from "@/components/use-session";
+import { LocalTime } from "@/components/local-time";
 import { UnlockIdentity } from "@/components/unlock";
 import { Button, Card, Note, Spinner, StatusChip, TerminalCard, TextInput } from "@/components/ui";
 
@@ -203,13 +204,15 @@ export default function TrustcorePage() {
               <span className="text-mute">Waiting for frames…</span>
             ) : (
               activity.map((f) => (
-                <div key={`${f.room}-${f.seq}`} className="flex justify-between gap-3 border-b border-hairline py-1 last:border-0">
+                <div key={`${f.room}-${f.seq}`} className="flex flex-wrap items-center justify-between gap-x-3 gap-y-0.5 border-b border-hairline py-1 last:border-0">
                   <span>
                     <span className="font-medium">{f.type}</span>
                     <span className="text-mute"> /{f.room.replace("mb-p-tclk-", "deal-")}</span>
+                    {f.contractId ? <span className="text-mute"> · {f.contractId.slice(0, 10)}…</span> : null}
                   </span>
                   <span className="text-mute">
-                    identity_{f.did.slice(-4)} {f.amount ? `· ${f.amount} ${f.asset ?? ""}` : ""}
+                    identity_{f.did.slice(-4)} {f.amount ? `· ${f.amount} ${f.asset ?? ""}` : ""} ·{" "}
+                    <LocalTime value={f.ts} />
                   </span>
                 </div>
               ))

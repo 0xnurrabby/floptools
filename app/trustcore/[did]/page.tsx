@@ -2,6 +2,7 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { Card, CopyButton, Note, StatusChip, TerminalCard } from "@/components/ui";
+import { LocalTime } from "@/components/local-time";
 import { ingestIfStale } from "@/lib/trustcore-ingest";
 import { safeQuery } from "@/lib/db";
 import { framesForDealOfDid } from "@/lib/trustcore-db";
@@ -128,6 +129,11 @@ export default async function AgentProfilePage({ params }: { params: Promise<{ d
                 </div>
                 <div className="flex items-center gap-3">
                   <span className="caption-sm font-mono text-mute">{d.contractId.slice(0, 11)}…</span>
+                  {d.lastFrameTs ? (
+                    <span className="caption-sm text-body">
+                      last frame <LocalTime value={d.lastFrameTs} />
+                    </span>
+                  ) : null}
                   {d.lockedAtMs && d.revealedAtMs ? (
                     <span className="caption-sm text-body">settled in {humanMs(d.revealedAtMs - d.lockedAtMs)}</span>
                   ) : null}

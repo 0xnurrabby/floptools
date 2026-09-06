@@ -701,6 +701,7 @@ export default function DealPage() {
                             <p className="caption-sm mt-0.5 text-mute">
                               {first.offer.job?.context ? first.offer.job.context.slice(0, 120) : "deal"} · accepted by{" "}
                               {group.length} identit{group.length === 1 ? "y" : "ies"}
+                              {first.offerTs ? <> · posted <LocalTime value={first.offerTs} /></> : null}
                             </p>
                           </div>
                           <StatusChip tone="ok">{first.role}</StatusChip>
@@ -721,7 +722,9 @@ export default function DealPage() {
                               <div className="min-w-0">
                                 <p className="body-sm-strong text-ink">{shortContract(b.contract ?? "")}</p>
                                 <p className="caption-sm mt-0.5 text-mute">
-                                  accepted by identity_{b.accept?.from.slice(-4)} · from the board
+                                  accepted by identity_{b.accept?.from.slice(-4)}
+                                  {b.offerTs ? <> · offer <LocalTime value={b.offerTs} /></> : null}
+                                  {b.acceptTs ? <> · accepted <LocalTime value={b.acceptTs} /></> : null}
                                   {b.role === "payee" && !deals.some((d) => d.contract === b.contract && !!d.preimage)
                                     ? " · the secret is not in this browser"
                                     : ""}
