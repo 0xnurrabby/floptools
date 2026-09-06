@@ -118,10 +118,11 @@ export default function DealDetailPage() {
   const readBoard = useCallback(async (opts: { wait?: boolean } = {}): Promise<boolean> => {
     if (!validContract || !dealRoomName) return true;
     const client = getClient();
-    const first = lastDealSeqRef.current === 0;
     const dealRoomRead = await client
       .readRoom(dealRoomName, {
-        ...(first ? { limit: 200 } : { since: lastDealSeqRef.current, limit: 200, ...(opts.wait === true ? { wait: 8 } : {}) }),
+        since: lastDealSeqRef.current,
+        limit: 200,
+        ...(opts.wait === true ? { wait: 8 } : {}),
       })
       .catch(() => null);
     const waitHeld = opts.wait !== true || !(dealRoomRead?.rawBody.includes('"wait_held":false') ?? false);
