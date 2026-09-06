@@ -30,6 +30,7 @@ import {
   type OfferFrame,
   type PaperRecord,
   type RecordInput,
+  type StepStatus,
 } from "@/lib/tclk-deal";
 import { findDeal, patchDeal, rememberPosted, type DealRecord } from "@/lib/deal-store";
 import { identityShortName } from "@/lib/identity";
@@ -70,6 +71,7 @@ export default function DealDetailPage() {
   const [deal] = useState<DealRecord | null>(() => findDeal(contract));
   const pairRef = useRef<PairState>({ status: "loading" });
   const [pairState, setPairState] = useState<PairState>({ status: "loading" });
+  const lastDealSeqRef = useRef(0);
 
   const dealRoomName = dealRoom(contract);
   const validContract = dealRoomName !== null;
@@ -107,74 +109,94 @@ export default function DealDetailPage() {
   }, [contract, validContract]);
 
   /**
-   * The deal room + paper rail are append-only and stable, so this is safe to
-   * re-read every 30s. The offer/accept pair is fetched once (and on Refresh)
-   * — it never changes after the accept.
+   * Read the deal room + paper rail. The deal room is append-only, so once we
+   * know its last seq we long-poll with `since=<seq>&wait=8` — the venue holds
+   * the request until something lands, so the page updates by itself within
+   * seconds, with no manual refresh and no busy polling. Returns whether the
+   * venue actually held the wait (false = retry after a sleep).
    */
-  const readBoard = useCallback(() => {
-    if (!validContract || !dealRoomName) return;
+  const readBoard = useCallback(async (opts: { wait?: boolean } = {}): Promise<boolean> => {
+    if (!validContract || !dealRoomName) return true;
     const client = getClient();
-    const job = Promise.all([
-      client.readRoom(dealRoomName, { limit: 200 }).catch(() => null),
-      (async () => {
-        try {
-          const { ns, key } = paperNote(contract);
-          const note = await client.readNote(ns, key);
-          return note.found ? note.value : null;
-        } catch {
-          return null;
-        }
-      })(),
-    ]);
-    void job.then(async ([dealRoomRead, paperRaw]) => {
-      const pair = pairRef.current;
-      const records: RecordInput[] = [];
-      let localFallback = false;
-      if (pair.status === "found") {
-        records.push(pair.offerRecord, pair.acceptRecord);
-      } else if (deal?.accept) {
-        // Offline / scrolled-out fallback: trust the local copy only if it
-        // really hashes to THIS contract id.
-        const computed = await contractId(deal.offer, {
-          from: deal.accept.from,
-          ref: deal.accept.ref,
-          statement: deal.accept.statement,
-          paymentKey: deal.accept.paymentKey,
-          nonce: deal.accept.nonce,
-        });
-        if (computed.toLowerCase() === contract.toLowerCase()) {
-          records.push(
-            deal.offerRecord ?? { room: OFFERS_ROOM, from: deal.offer.from, text: encodeFrame(deal.offer), seq: 0, ts: "", sig: undefined },
-            deal.acceptRecord ?? { room: OFFERS_ROOM, from: deal.accept.from, text: encodeFrame(deal.accept), seq: 0, ts: "", sig: undefined },
-          );
-          localFallback = true;
-        }
-      }
-      for (const m of dealRoomRead?.messages ?? []) {
-        records.push({ room: dealRoomName, from: m.from, text: m.text, seq: m.seq, ts: m.ts, sig: m.sig });
-      }
-      setBoard({
-        records,
-        paper: paperRaw ? decodePaperRecord(paperRaw) : null,
-        paperRaw,
-        loaded: true,
-        error: pair.status === "error" ? `Could not read the board: ${pair.error}` : null,
-        at: nowMs(),
-        localFallback,
+    const first = lastDealSeqRef.current === 0;
+    const dealRoomRead = await client
+      .readRoom(dealRoomName, {
+        ...(first ? { limit: 200 } : { since: lastDealSeqRef.current, limit: 200, ...(opts.wait === true ? { wait: 8 } : {}) }),
+      })
+      .catch(() => null);
+    const waitHeld = opts.wait !== true || !(dealRoomRead?.rawBody.includes('"wait_held":false') ?? false);
+
+    let paperRaw: string | null = null;
+    try {
+      const { ns, key } = paperNote(contract);
+      const note = await client.readNote(ns, key);
+      paperRaw = note.found ? note.value : null;
+    } catch {
+      paperRaw = null;
+    }
+
+    const pair = pairRef.current;
+    const records: RecordInput[] = [];
+    let localFallback = false;
+    if (pair.status === "found") {
+      records.push(pair.offerRecord, pair.acceptRecord);
+    } else if (deal?.accept) {
+      // Offline / scrolled-out fallback: trust the local copy only if it
+      // really hashes to THIS contract id.
+      const computed = await contractId(deal.offer, {
+        from: deal.accept.from,
+        ref: deal.accept.ref,
+        statement: deal.accept.statement,
+        paymentKey: deal.accept.paymentKey,
+        nonce: deal.accept.nonce,
       });
+      if (computed.toLowerCase() === contract.toLowerCase()) {
+        records.push(
+          deal.offerRecord ?? { room: OFFERS_ROOM, from: deal.offer.from, text: encodeFrame(deal.offer), seq: 0, ts: "", sig: undefined },
+          deal.acceptRecord ?? { room: OFFERS_ROOM, from: deal.accept.from, text: encodeFrame(deal.accept), seq: 0, ts: "", sig: undefined },
+        );
+        localFallback = true;
+      }
+    }
+    for (const m of dealRoomRead?.messages ?? []) {
+      records.push({ room: dealRoomName, from: m.from, text: m.text, seq: m.seq, ts: m.ts, sig: m.sig });
+    }
+    if (dealRoomRead?.messages?.length) {
+      const maxSeq = Math.max(...dealRoomRead.messages.map((m) => m.seq));
+      if (maxSeq > lastDealSeqRef.current) lastDealSeqRef.current = maxSeq;
+    }
+    setBoard({
+      records,
+      paper: paperRaw ? decodePaperRecord(paperRaw) : null,
+      paperRaw,
+      loaded: true,
+      error: pair.status === "error" ? `Could not read the board: ${pair.error}` : null,
+      at: nowMs(),
+      localFallback,
     });
+    return waitHeld;
   }, [contract, dealRoomName, validContract, deal]);
 
   useEffect(() => {
     loadPair();
-    readBoard();
-    const t = setInterval(readBoard, 30_000);
-    return () => clearInterval(t);
+    void readBoard();
+    let cancelled = false;
+    const loop = async () => {
+      if (cancelled) return;
+      const held = await readBoard({ wait: true });
+      if (cancelled) return;
+      if (!held) await new Promise((r) => setTimeout(r, 8000));
+      void loop();
+    };
+    void loop();
+    return () => {
+      cancelled = true;
+    };
   }, [loadPair, readBoard]);
 
   useEffect(() => {
     if (pairState.status === "loading") return;
-    readBoard();
+    void readBoard();
   }, [pairState, readBoard]);
 
   useEffect(() => {
@@ -203,7 +225,15 @@ export default function DealDetailPage() {
     return res;
   };
 
-  const writePaperRecord = async () => {
+  const paperMatches = (rec: PaperRecord | null): boolean =>
+    offer !== null &&
+    accept !== null &&
+    rec !== null &&
+    rec.lock === offer.lock &&
+    rec.statement === accept.statement &&
+    rec.refundAfterMs === offer.refundAfterMs;
+
+  const writePaperRecord = async (overwrite = false) => {
     if (!offer || !accept) return;
     setBusy("paper");
     setActionMsg(null);
@@ -215,13 +245,55 @@ export default function DealDetailPage() {
         statement: accept.statement,
         refundAfterMs: offer.refundAfterMs,
       });
-      const res = await getClient().setNote(ns, key, value, { ifAbsent: true });
-      if (res.status < 200 || res.status >= 300) {
-        throw new Error(`The rail record was refused (HTTP ${res.status}). ${res.body.slice(0, 200)}`);
+
+      const existing = await getClient().readNote(ns, key).catch(() => null);
+      if (existing?.found && existing.value) {
+        const rec = decodePaperRecord(existing.value);
+        if (paperMatches(rec)) {
+          setActionMsg({ ok: true, text: `The rail record is already on the board and matches this contract — skip straight to posting the lock.` });
+          void readBoard();
+          return;
+        }
+        if (!overwrite) {
+          setActionMsg({
+            ok: false,
+            text: `A different paper record is on the rail for this contract. Overwrite it with the matching record (CAS), or ask the other side to fix theirs first.`,
+          });
+          return;
+        }
+        const res = await getClient().setNote(ns, key, value, { if: existing.value });
+        if (res.status < 200 || res.status >= 300) {
+          throw new Error(`The rail record was refused (HTTP ${res.status}). ${res.body.slice(0, 200)}`);
+        }
+        rememberPosted({ kind: "paper", contract, at: nowMs(), detail: `tclk-paper-${ns.slice(-2)}/${key}` });
+        setActionMsg({ ok: true, text: `Paper rail record written to kv/${ns}/${key} (replaced the mismatched one). Now post the lock — it names the full contract id.` });
+        void readBoard();
+        return;
+      }
+
+      try {
+        const res = await getClient().setNote(ns, key, value, { ifAbsent: true });
+        if (res.status < 200 || res.status >= 300) {
+          throw new Error(`The rail record was refused (HTTP ${res.status}). ${res.body.slice(0, 200)}`);
+        }
+      } catch (e) {
+        const err = e as { status?: number };
+        if (err?.status === 409) {
+          // It appeared between our read and write (a parallel worker won).
+          const again = await getClient().readNote(ns, key).catch(() => null);
+          const rec = again?.found && again.value ? decodePaperRecord(again.value) : null;
+          if (paperMatches(rec)) {
+            setActionMsg({ ok: true, text: "The rail record landed just now (a parallel write won) and it matches — post the lock." });
+            void readBoard();
+            return;
+          }
+          throw new Error("The rail record appeared between your read and write, and it does NOT match this contract. Overwrite it to proceed.");
+        }
+        throw e;
       }
       rememberPosted({ kind: "paper", contract, at: nowMs(), detail: `tclk-paper-${ns.slice(-2)}/${key}` });
       setActionMsg({ ok: true, text: `Paper rail record written to kv/${ns}/${key}. Now post the lock — it names the full contract id.` });
-      readBoard();
+      void readBoard();
     } catch (e) {
       setActionMsg({ ok: false, text: (e as Error).message });
     } finally {
@@ -255,7 +327,7 @@ export default function DealDetailPage() {
       if (deal) patchDeal(contract, { lock: frame });
       rememberPosted({ kind: "lock", contract, at: nowMs(), detail: "lock frame in deal room" });
       setActionMsg({ ok: true, text: "Lock posted. The payee now submits the work and reveals." });
-      readBoard();
+      void readBoard();
     } catch (e) {
       setActionMsg({ ok: false, text: (e as Error).message });
     } finally {
@@ -273,7 +345,7 @@ export default function DealDetailPage() {
       rememberPosted({ kind: "work", contract, at: nowMs(), detail: "deliverable message in deal room" });
       setActionMsg({ ok: true, text: "Your deliverable is on the board. Now reveal the secret to claim the deal." });
       setWorkText("");
-      readBoard();
+      void readBoard();
     } catch (e) {
       setActionMsg({ ok: false, text: (e as Error).message });
     } finally {
@@ -307,7 +379,7 @@ export default function DealDetailPage() {
       }
       rememberPosted({ kind: "reveal", contract, at: nowMs(), detail: "reveal frame in deal room" });
       setActionMsg({ ok: true, text: "Revealed. The deal is claimed on the board and the paper record now says claimed. Publish the receipt to finish." });
-      readBoard();
+      void readBoard();
     } catch (e) {
       setActionMsg({ ok: false, text: (e as Error).message });
     } finally {
@@ -324,7 +396,7 @@ export default function DealDetailPage() {
       await postTo(dealRoomName, encodeFrame(frame));
       rememberPosted({ kind: "refund", contract, at: nowMs(), detail: "refund frame in deal room" });
       setActionMsg({ ok: true, text: "Refund posted — the deal is refunded." });
-      readBoard();
+      void readBoard();
     } catch (e) {
       setActionMsg({ ok: false, text: (e as Error).message });
     } finally {
@@ -341,7 +413,7 @@ export default function DealDetailPage() {
       await postTo(dealRoomName, encodeFrame(frame));
       rememberPosted({ kind: "cancel", contract, at: nowMs(), detail: "cancel frame in deal room" });
       setActionMsg({ ok: true, text: "Cancelled before any lock — the deal is closed." });
-      readBoard();
+      void readBoard();
     } catch (e) {
       setActionMsg({ ok: false, text: (e as Error).message });
     } finally {
@@ -361,7 +433,7 @@ export default function DealDetailPage() {
       if (deal) patchDeal(contract, { receipt: frame });
       rememberPosted({ kind: "receipt", contract, at: nowMs(), detail: `receipt ${outcome}` });
       setActionMsg({ ok: true, text: `Receipt published (${outcome}). Anyone can open /deal/receipt/${contract} and verify it.` });
-      readBoard();
+      void readBoard();
     } catch (e) {
       setActionMsg({ ok: false, text: (e as Error).message });
     } finally {
@@ -373,6 +445,77 @@ export default function DealDetailPage() {
     ? nextGuard(fold, paper, { myDid: did ?? "" })
     : { action: "reading the board", blocked: true, reason: "Loading the public rooms…" };
   const refundDue = !!offer && board.at > 0 && board.at >= offer.refundAfterMs;
+
+  /**
+   * The one action this identity can take right now, per timeline step. The
+   * step's row gets a small button so "whose turn it is" is one click away.
+   * Returns a kind only — the handler is bound in the click event, never here.
+   */
+  type StepActionKind = "paper" | "lock" | "work" | "reveal" | "receipt" | "recheck";
+  const actionForStep = (step: StepStatus["step"]): { label: string; kind: StepActionKind; disabled: boolean } | null => {
+    if (!offer || !did || (!isPayer && !isPayee)) return null;
+    switch (step) {
+      case "paper":
+        if (isPayer && fold?.state === "accepted" && !paper) {
+          return { label: "Write it", kind: "paper", disabled: busy !== null };
+        }
+        if (isPayer && paper && !paperMatches(paper)) {
+          return { label: "Fix record", kind: "paper", disabled: busy !== null };
+        }
+        return null;
+      case "lock":
+        if (isPayer && fold?.state === "accepted" && paper && paperMatches(paper)) {
+          return { label: "Post lock", kind: "lock", disabled: busy !== null };
+        }
+        return null;
+      case "work":
+        if (isPayee && fold?.state === "locked") {
+          return { label: "Write deliverable", kind: "work", disabled: false };
+        }
+        return null;
+      case "reveal":
+        if (isPayee && fold?.state === "locked") {
+          return { label: "Reveal & claim", kind: "reveal", disabled: busy !== null || !deal?.preimage };
+        }
+        return null;
+      case "receipt":
+        if ((fold?.state === "claimed" || fold?.state === "refunded" || fold?.state === "cancelled") && !fold?.receipt) {
+          return { label: "Publish receipt", kind: "receipt", disabled: busy !== null };
+        }
+        return null;
+      case "accept":
+        if (isPayer && !accept) {
+          return { label: "Re-check", kind: "recheck", disabled: false };
+        }
+        return null;
+      default:
+        return null;
+    }
+  };
+
+  const runStepAction = (act: { kind: StepActionKind }) => {
+    switch (act.kind) {
+      case "paper":
+        void writePaperRecord();
+        break;
+      case "lock":
+        void postLock();
+        break;
+      case "work":
+        document.getElementById("deal-work")?.scrollIntoView({ behavior: "smooth", block: "center" });
+        break;
+      case "reveal":
+        void reveal();
+        break;
+      case "receipt":
+        void postReceipt();
+        break;
+      case "recheck":
+        loadPair();
+        void readBoard();
+        break;
+    }
+  };
 
   return (
     <div className="mx-auto max-w-4xl px-4 pb-10 pt-12">
@@ -405,7 +548,7 @@ export default function DealDetailPage() {
           variant="secondary"
           onClick={() => {
             loadPair();
-            readBoard();
+            void readBoard();
           }}
           className="shrink-0"
         >
@@ -478,26 +621,43 @@ export default function DealDetailPage() {
         <h2 className="heading-lg">Timeline</h2>
         <div className="mt-4 rounded-[16px] border border-hairline bg-surface-card p-4 sm:p-5">
           <ol className="space-y-3">
-            {fold?.steps.map((s) => (
-              <li key={s.step} className="flex items-start gap-3">
-                <span className={`mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${
-                  s.done ? "bg-leaf-600 text-white" : s.blocked ? "bg-tint-amber text-amber-600 border border-amber-600/30" : "bg-surface-soft text-mute"
-                }`}>
-                  {s.done ? (
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                      <path d="M20 6 9 17l-5-5" />
-                    </svg>
-                  ) : s.blocked ? "!" : String(fold?.steps.indexOf(s) + 1)}
-                </span>
-                <div className="min-w-0">
-                  <p className="body-sm-strong text-ink">
-                    {s.label}
-                    {s.at ? <span className="caption-sm ml-2 font-normal text-mute">{s.at}</span> : null}
-                  </p>
-                  {s.reason ? <p className="caption-sm mt-0.5 text-body">{s.reason}</p> : null}
-                </div>
-              </li>
-            ))}
+            {fold?.steps.map((s) => {
+              const act = actionForStep(s.step);
+              return (
+                <li key={s.step} className="flex items-start gap-3">
+                  <span className={`mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${
+                    s.done ? "bg-leaf-600 text-white" : s.blocked ? "bg-tint-amber text-amber-600 border border-amber-600/30" : "bg-surface-soft text-mute"
+                  }`}>
+                    {s.done ? (
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        <path d="M20 6 9 17l-5-5" />
+                      </svg>
+                    ) : s.blocked ? "!" : String(fold?.steps.indexOf(s) + 1)}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="body-sm-strong text-ink">
+                      {s.label}
+                      {s.at ? <span className="caption-sm ml-2 font-normal text-mute">{s.at}</span> : null}
+                    </p>
+                    {s.reason ? <p className="caption-sm mt-0.5 text-body">{s.reason}</p> : null}
+                  </div>
+                  {act ? (
+                    <button
+                      type="button"
+                      onClick={() => runStepAction(act)}
+                      disabled={act.disabled}
+                      className={`ml-auto shrink-0 self-center rounded-full px-3.5 py-1.5 text-[12px] font-medium transition-colors ${
+                        act.disabled
+                          ? "cursor-not-allowed bg-surface-soft text-mute"
+                          : "bg-tint-brand text-brand-700 hover:bg-brand-500/20"
+                      }`}
+                    >
+                      {act.label}
+                    </button>
+                  ) : null}
+                </li>
+              );
+            })}
           </ol>
         </div>
       </section>
@@ -520,6 +680,11 @@ export default function DealDetailPage() {
                 {fold?.state === "accepted" && isPayer && paper ? (
                   <Button onClick={() => void postLock()} disabled={busy !== null}>
                     {busy === "lock" ? <Spinner label="…" /> : "Post lock"}
+                  </Button>
+                ) : null}
+                {fold?.state === "accepted" && isPayer && paper && !paperMatches(paper) ? (
+                  <Button variant="secondary" onClick={() => void writePaperRecord(true)} disabled={busy !== null}>
+                    {busy === "paper" ? <Spinner label="…" /> : "Overwrite rail record"}
                   </Button>
                 ) : null}
                 {fold?.state === "locked" && isPayee ? (
@@ -550,11 +715,18 @@ export default function DealDetailPage() {
               </div>
             </div>
           </Card>
+          {fold?.state === "locked" && isPayee && !deal?.preimage ? (
+            <Note tone="warn" className="mt-3">
+              This browser does not hold the secret — it was minted in the browser that accepted this deal and the
+              secret never left it. You cannot reveal from here. The payer can refund after the refund window, or you
+              can re-accept a fresh offer for a new secret.
+            </Note>
+          ) : null}
         </section>
       ) : null}
 
       {fold?.state === "locked" && isPayee ? (
-        <section className="mt-4">
+        <section className="mt-4" id="deal-work">
           <FieldLike label="The work — what you are delivering" hint="Posted as a signed message in the deal room. Your own words.">
             <TextArea rows={3} value={workText} onChange={(e) => setWorkText(e.target.value)} placeholder="e.g. Here is the walkthrough: /kv/… — text below. (The reveal opens the lock.)" />
           </FieldLike>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, Card, Field, Note, Spinner, StatusChip, TextArea, TextInput } from "@/components/ui";
@@ -25,6 +25,7 @@ import {
   getDealsSnapshot,
   saveDeal,
   patchDealByOfferId,
+  findDealByOfferId,
   subscribeDeals,
   rememberPosted,
   type DealRecord,
@@ -36,6 +37,16 @@ interface OfferRow {
   seq: number;
   ts: string;
   accepted: boolean;
+}
+
+interface BoardDeal {
+  role: "payer" | "payee";
+  offer: OfferFrame;
+  accept: AcceptFrame | null;
+  contract: string | null;
+  offerTs: string;
+  acceptTs: string | null;
+  pending: boolean;
 }
 
 export default function DealPage() {
@@ -64,8 +75,49 @@ export default function DealPage() {
   const [acceptBusy, setAcceptBusy] = useState<string | null>(null);
   const [acceptError, setAcceptError] = useState<string | null>(null);
 
+  // this identity's deals found on the board (other browsers/devices too)
+  const [boardDeals, setBoardDeals] = useState<BoardDeal[] | null>(null);
+  const [boardDealsError, setBoardDealsError] = useState<string | null>(null);
+  const [boardBusy, setBoardBusy] = useState(false);
+
   const pendingOffers = deals.filter((d) => !d.contract);
   const activeDeals = deals.filter((d) => d.contract);
+
+  const localContracts = new Set(activeDeals.map((d) => d.contract));
+  const localOfferIds = new Set(deals.map((d) => d.offerId));
+  const boardExtra = (boardDeals ?? []).filter(
+    (b) => !(b.contract && localContracts.has(b.contract)) && !(!b.contract && localOfferIds.has(b.offer.id)),
+  );
+
+  const loadBoardDeals = useCallback((identity: string | null) => {
+    void Promise.resolve().then(() => {
+      if (!identity) {
+        setBoardDeals(null);
+        return;
+      }
+      setBoardBusy(true);
+      setBoardDealsError(null);
+      void fetch(`/api/tc/deal-lookup?did=${encodeURIComponent(identity)}`)
+        .then((res) => res.json() as Promise<{ deals?: BoardDeal[]; error?: string }>)
+        .then((data) => {
+          if (!data.deals) {
+            setBoardDealsError(data.error ?? "Could not read your deals from the board.");
+            setBoardDeals([]);
+          } else {
+            setBoardDeals(data.deals);
+          }
+        })
+        .catch((e: unknown) => {
+          setBoardDealsError((e as Error).message);
+          setBoardDeals([]);
+        })
+        .finally(() => setBoardBusy(false));
+    });
+  }, []);
+
+  useEffect(() => {
+    loadBoardDeals(did);
+  }, [did, loadBoardDeals]);
 
   const loadOffers = useCallback(() => {
     setOffersBusy(true);
@@ -155,6 +207,7 @@ export default function DealPage() {
       });
       rememberPosted({ kind: "offer", contract: "", at: nowMs(), detail: "offer in tclk-offers" });
       setPostOk("Offer posted to tclk-offers. Now wait — another identity accepts it and this workspace turns it into a contract.");
+      loadBoardDeals(did);
       setMode("work");
       loadOffers();
     } catch (e) {
@@ -195,6 +248,39 @@ export default function DealPage() {
     }
   };
 
+  const checkBoardPending = async (deal: BoardDeal) => {
+    setAcceptError(null);
+    try {
+      const res = await fetch(`/api/tc/deal-lookup?offerId=${encodeURIComponent(deal.offer.id)}`);
+      const data = (await res.json()) as { found?: boolean; error?: string; accept?: AcceptFrame; acceptRecord?: RecordInput };
+      if (!res.ok) {
+        setAcceptError(data.error ?? `Lookup failed (HTTP ${res.status}).`);
+        return;
+      }
+      if (!data.found || !data.accept) {
+        setAcceptError(
+          "Not accepted yet — or the accept has scrolled out of the venue ring (tclk-offers keeps only the newest ~10 MiB). Post a fresh offer if it has been a while.",
+        );
+        return;
+      }
+      if (!findDealByOfferId(deal.offer.id)) {
+        saveDeal({
+          contract: data.accept.contract,
+          role: deal.role,
+          offer: deal.offer,
+          offerId: deal.offer.id,
+          accept: data.accept,
+          statement: data.accept.statement,
+          createdAt: nowMs(),
+        });
+      }
+      loadBoardDeals(did);
+      router.push(`/deal/${encodeURIComponent(data.accept.contract)}`);
+    } catch (e) {
+      setAcceptError((e as Error).message);
+    }
+  };
+
   const acceptOffer = async (row: OfferRow) => {
     if (!did) return;
     setAcceptBusy(row.offer.id);
@@ -226,6 +312,7 @@ export default function DealPage() {
         createdAt: nowMs(),
       });
       rememberPosted({ kind: "accept", contract: accept.contract, at: nowMs(), detail: "accept in tclk-offers" });
+      loadBoardDeals(did);
       router.push(`/deal/${encodeURIComponent(accept.contract)}`);
     } catch (e) {
       setAcceptError((e as Error).message);
@@ -402,8 +489,10 @@ export default function DealPage() {
       {/* my deals */}
       <section className="mt-10">
         <h2 className="heading-lg">Your deals</h2>
-        {deals.length === 0 ? (
-          <p className="caption-sm mt-3 text-mute">Nothing yet. Post an offer or accept one — it lands here.</p>
+        {deals.length === 0 && (boardDeals === null || boardDeals.length === 0) ? (
+          <p className="caption-sm mt-3 text-mute">
+            {boardBusy ? "Reading the board for your deals…" : "Nothing yet. Post an offer or accept one — it lands here."}
+          </p>
         ) : (
           <div className="mt-3 space-y-2.5">
             {pendingOffers.map((d) => (
@@ -430,8 +519,39 @@ export default function DealPage() {
                 <StatusChip tone="ok">{d.role}</StatusChip>
               </Link>
             ))}
+            {boardExtra.map((b) =>
+              b.contract ? (
+                <Link
+                  key={b.contract}
+                  href={`/deal/${encodeURIComponent(b.contract)}`}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-[16px] border border-dashed border-hairline bg-surface-card px-4 py-3 transition-all hover:-translate-y-0.5 hover:border-brand-500/40 hover:shadow-soft"
+                >
+                  <div className="min-w-0">
+                    <p className="body-sm-strong text-ink">{b.role === "payer" ? "Hiring" : "Working"} · {shortContract(b.contract)}</p>
+                    <p className="caption-sm mt-0.5 text-mute">
+                      {b.offer.job?.context ? b.offer.job.context.slice(0, 80) : "deal"} · from the board
+                      {b.role === "payee" && !deals.some((d) => d.contract === b.contract && !!d.preimage)
+                        ? " · the secret is not in this browser"
+                        : ""}
+                    </p>
+                  </div>
+                  <StatusChip tone="ok">{b.role}</StatusChip>
+                </Link>
+              ) : (
+                <div key={b.offer.id} className="flex flex-wrap items-center justify-between gap-2 rounded-[16px] border border-dashed border-hairline bg-surface-card px-4 py-3">
+                  <div className="min-w-0">
+                    <p className="body-sm-strong text-ink">Your offer · {shortContract(b.offer.id)}</p>
+                    <p className="caption-sm mt-0.5 text-mute">posted as {b.role} · from the board · waiting for acceptance</p>
+                  </div>
+                  <Button variant="secondary" onClick={() => void checkBoardPending(b)}>Check acceptance</Button>
+                </div>
+              ),
+            )}
           </div>
         )}
+        {boardDealsError ? (
+          <p className="caption-sm mt-3 text-amber-600">Board lookup: {boardDealsError}</p>
+        ) : null}
       </section>
 
       <Note tone="info" className="mt-8">

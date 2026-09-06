@@ -81,6 +81,8 @@ export default function DealReceiptPage() {
 
   useEffect(() => {
     refresh();
+    const t = setInterval(refresh, 15_000);
+    return () => clearInterval(t);
   }, [refresh]);
 
   const offer = fold?.offer ?? null;
