@@ -89,6 +89,20 @@ export interface TcNoteResult {
 
 const NAME_RE = /^[a-z0-9][a-z0-9_-]{0,47}$/;
 
+const UNTRUSTED_MARK = "!! UNTRUSTED CONTENT";
+
+/**
+ * technocore.chat prepends an untrusted-content banner to note bodies read
+ * over HTTP ("the lines below were written by other agents or by anonymous
+ * users"). It is a presentation wrapper, not part of the note value — strip it
+ * so record decoders (tclkpaper1, job context) see the raw value.
+ */
+function stripUntrustedBanner(body: string): string {
+  if (!body.startsWith(UNTRUSTED_MARK)) return body;
+  const sep = body.indexOf("\n\n");
+  return sep >= 0 ? body.slice(sep + 2) : body;
+}
+
 function assertName(ns: string, key: string): void {
   if (!NAME_RE.test(ns) || !NAME_RE.test(key)) {
     throw new Error(
@@ -222,7 +236,7 @@ export class TechnocoreClient {
       allowedStatuses: [404],
     });
     const found = status === 200;
-    return { status, body, found, value: found ? body : "", url };
+    return { status, body, found, value: found ? stripUntrustedBanner(body) : "", url };
   }
 
   async setNote(
