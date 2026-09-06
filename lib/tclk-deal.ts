@@ -29,7 +29,8 @@ export type DealState =
   | "locked"
   | "claimed"
   | "refunded"
-  | "cancelled";
+  | "cancelled"
+  | "expired";
 
 const HEX32 = /^0x[0-9a-f]{64}$/;
 const HEX33 = /^0x[0-9a-f]{66}$/;
@@ -633,6 +634,8 @@ export async function foldContract(
     .filter((r) => r.room !== OFFERS_ROOM)
     .sort((a, b) => (a.ts === b.ts ? a.seq - b.seq : a.ts < b.ts ? -1 : 1));
 
+  const now = opts.now ?? Number.POSITIVE_INFINITY;
+
   let state: DealState = offer ? "proposed" : "proposed";
   let stateReason: string | null = pairReason;
   let lock: LockFrame | null = null;
@@ -644,6 +647,7 @@ export async function foldContract(
 
   if (offer) {
     // accept guard (SPEC §4: missing/malformed time fails closed)
+    let acceptLate = false;
     if (accept) {
       const acceptTs = acceptRecord ? new Date(acceptRecord.ts).getTime() : Number.NaN;
       const validAccept =
@@ -654,9 +658,12 @@ export async function foldContract(
       if (validAccept) {
         state = "accepted";
       } else {
+        acceptLate = !Number.isNaN(acceptTs) && acceptTs >= offer.expiresMs;
         stateReason = Number.isNaN(acceptTs)
           ? "acceptance time is missing or malformed — fails closed"
-          : "acceptance failed its guard";
+          : acceptLate
+            ? `The accept came after the offer expired on ${tsLabel(new Date(offer.expiresMs).toISOString())} — fails closed`
+            : "acceptance failed its guard";
       }
     }
     for (const r of dealRecords) {
@@ -720,6 +727,14 @@ export async function foldContract(
     for (const r of dealRecords) {
       if (!isTclkLine(r.text)) workMessages.push(r);
     }
+    // Expiry (SPEC §4: the accept must land before expiresMs; a valid accept
+    // is never retroactively expired — claim/refund windows govern from there).
+    if (state === "proposed" && Number.isFinite(now) && now >= offer.expiresMs) {
+      state = "expired";
+      stateReason = acceptLate
+        ? `The accept came after the offer expired on ${tsLabel(new Date(offer.expiresMs).toISOString())} — fails closed.`
+        : `The offer expired on ${tsLabel(new Date(offer.expiresMs).toISOString())} — nobody accepted it in time.`;
+    }
   }
 
   const steps: StepStatus[] = [];
@@ -727,7 +742,7 @@ export async function foldContract(
     stepRow("offer", "Offer posted", !!offer, offerRecord ? tsLabel(offerRecord.ts) : undefined, offer ? undefined : pairReason ?? "No offer found in tclk-offers."),
   );
   steps.push(
-    stepRow("accept", "Accepted", !!accept, acceptRecord ? tsLabel(acceptRecord.ts) : undefined, !offer ? pairReason ?? "Waiting for an offer." : !accept ? "Waiting for the other side to accept." : undefined),
+    stepRow("accept", "Accepted", !!accept, acceptRecord ? tsLabel(acceptRecord.ts) : undefined, !offer ? pairReason ?? "Waiting for an offer." : state === "expired" ? `The offer expired on ${offer ? tsLabel(new Date(offer.expiresMs).toISOString()) : ""} without a valid accept — the deal window is closed.` : !accept ? "Waiting for the other side to accept." : undefined),
   );
   steps.push(
     stepRow("paper", "Paper record on the rail", paper !== null, paper ? undefined : "The rail record must exist at kv/tclk-paper-<hh>/<key> before the lock.", !paper ? "Not written yet." : undefined),
@@ -796,6 +811,10 @@ export function nextGuard(
   if (fold.state === "cancelled") return { action: "deal cancelled", blocked: true, reason: "A cancel frame ended this deal before any lock." };
   if (fold.state === "claimed") return { action: "deal complete", blocked: true, reason: "Reveal published — the contract is claimed." };
   if (fold.state === "refunded") return { action: "deal refunded", blocked: true, reason: "The refund window opened and the payer reclaimed." };
+  if (fold.state === "expired") {
+    const at = offer?.expiresMs ? ` on ${tsLabel(new Date(offer.expiresMs).toISOString())}` : "";
+    return { action: "expired", blocked: true, reason: `This offer expired${at} without a valid accept — the deal window is closed. Post a fresh offer to try again.` };
+  }
 
   const isPayer = myDid === offer.from;
   const isPayee = accept !== null && myDid === accept.from;

@@ -288,4 +288,35 @@ describe("tclk-deal conformance with @flop-labs/tclk", () => {
     expect(fold.state).toBe("proposed");
     expect(fold.steps.find((s) => s.step === "offer")?.reason).toContain("hashes to this contract id");
   });
+
+  it("folds to expired when the accept lands after the offer window closed", async () => {
+    const short = await mine.makeOffer({ from: PAYER, role: "payer", ...BASE, expiresMs: T0 + 1000 });
+    const preimage = `0x${"89".repeat(32)}`;
+    const accept = await mine.makeAccept(short, { from: PAYEE, statement: (await mine.hashLockFromPreimage(preimage)).hash });
+    const records: mine.RecordInput[] = [
+      { room: "tclk-offers", from: PAYER, text: mine.encodeFrame(short), seq: 1, ts: t(0), sig: "s" },
+      // accept ts t(10) = T0+10s — AFTER expiresMs T0+1s
+      { room: "tclk-offers", from: PAYEE, text: mine.encodeFrame(accept), seq: 2, ts: t(10), sig: "s" },
+    ];
+    const fold = await mine.foldContract(records, null, { contract: accept.contract, now: T0 + 5000 });
+    expect(fold.state).toBe("expired");
+    expect(fold.stateReason).toContain("expired");
+    expect(fold.steps.find((s) => s.step === "accept")?.reason).toContain("expired");
+    const guard = mine.nextGuard(fold, null, { myDid: PAYER });
+    expect(guard.action).toBe("expired");
+    expect(guard.blocked).toBe(true);
+  });
+
+  it("does not expire a deal that was accepted in time", async () => {
+    const offer = await mine.makeOffer({ from: PAYER, role: "payer", ...BASE });
+    const accept = await mine.makeAccept(offer, { from: PAYEE, statement: (await mine.hashLockFromPreimage(`0x${"9a".repeat(32)}`)).hash });
+    const records: mine.RecordInput[] = [
+      { room: "tclk-offers", from: PAYER, text: mine.encodeFrame(offer), seq: 1, ts: t(0), sig: "s" },
+      { room: "tclk-offers", from: PAYEE, text: mine.encodeFrame(accept), seq: 2, ts: t(1), sig: "s" },
+    ];
+    const fold = await mine.foldContract(records, null, { contract: accept.contract, now: BASE.expiresMs + 3_600_000 });
+    expect(fold.state).toBe("accepted");
+    const guard = mine.nextGuard(fold, null, { myDid: PAYER });
+    expect(guard.action).toBe("write paper record");
+  });
 });

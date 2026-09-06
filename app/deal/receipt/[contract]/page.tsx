@@ -73,7 +73,7 @@ export default function DealReceiptPage() {
         records.push({ room: roomName, from: m.from, text: m.text, seq: m.seq, ts: m.ts, sig: m.sig });
       }
       const paper = paperRaw ? decodePaperRecord(paperRaw) : null;
-      const f = await foldContract(records, paper, { contract });
+      const f = await foldContract(records, paper, { contract, now: Date.now() });
       setFold(f);
       setView({ records, paper, loaded: true, error, pairFound, pairChecked: true });
     });
@@ -146,7 +146,7 @@ export default function DealReceiptPage() {
         <StatusChip tone={verified ? "ok" : "warn"}>
           {verified ? "verified paper deal" : "incomplete or unverified"}
         </StatusChip>
-        <StatusChip tone={fold?.state === "claimed" ? "ok" : "empty"}>{fold?.state}</StatusChip>
+        <StatusChip tone={fold?.state === "claimed" ? "ok" : fold?.state === "expired" ? "warn" : "empty"}>{fold?.state}</StatusChip>
         <code className="font-mono text-[12px] text-body">{shortContract(contract)}</code>
         <button type="button" onClick={refresh} className="caption-sm rounded-full border border-hairline bg-canvas px-3 py-1 text-ink hover:bg-surface-soft">
           Refresh

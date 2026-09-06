@@ -24,11 +24,9 @@ import type { TcMessage } from "@/lib/technocore";
 import {
   getDealsSnapshot,
   saveDeal,
-  patchDealByOfferId,
   findDealByOfferId,
   subscribeDeals,
   rememberPosted,
-  type DealRecord,
 } from "@/lib/deal-store";
 
 interface OfferRow {
@@ -79,15 +77,15 @@ export default function DealPage() {
   const [boardDeals, setBoardDeals] = useState<BoardDeal[] | null>(null);
   const [boardDealsError, setBoardDealsError] = useState<string | null>(null);
   const [boardBusy, setBoardBusy] = useState(false);
+  // a coarse clock so expiry shows without Date.now() during render
+  const [clock, setClock] = useState(0);
 
-  const pendingOffers = deals.filter((d) => !d.contract);
-  const activeDeals = deals.filter((d) => d.contract);
+  const boardList = boardDeals ?? [];
 
-  const localContracts = new Set(activeDeals.map((d) => d.contract));
-  const localOfferIds = new Set(deals.map((d) => d.offerId));
-  const boardExtra = (boardDeals ?? []).filter(
-    (b) => !(b.contract && localContracts.has(b.contract)) && !(!b.contract && localOfferIds.has(b.offer.id)),
-  );
+  useEffect(() => {
+    const t = setInterval(() => setClock(Date.now()), 30_000);
+    return () => clearInterval(t);
+  }, []);
 
   const loadBoardDeals = useCallback((identity: string | null) => {
     void Promise.resolve().then(() => {
@@ -97,6 +95,7 @@ export default function DealPage() {
       }
       setBoardBusy(true);
       setBoardDealsError(null);
+      setClock(Date.now());
       void fetch(`/api/tc/deal-lookup?did=${encodeURIComponent(identity)}`)
         .then((res) => res.json() as Promise<{ deals?: BoardDeal[]; error?: string }>)
         .then((data) => {
@@ -214,37 +213,6 @@ export default function DealPage() {
       setPostError((e as Error).message);
     } finally {
       setPostBusy(false);
-    }
-  };
-
-  const checkAcceptance = async (deal: DealRecord) => {
-    setAcceptError(null);
-    try {
-      const res = await fetch(`/api/tc/deal-lookup?offerId=${encodeURIComponent(deal.offerId)}`);
-      const data = (await res.json()) as {
-        found?: boolean;
-        error?: string;
-        accept?: AcceptFrame;
-        acceptRecord?: RecordInput;
-      };
-      if (!res.ok) {
-        setAcceptError(data.error ?? `Lookup failed (HTTP ${res.status}).`);
-        return;
-      }
-      if (!data.found || !data.accept) {
-        setAcceptError(
-          "Not accepted yet — or the accept has scrolled out of the venue ring (tclk-offers keeps only the newest ~10 MiB). Post a fresh offer if it has been a while.",
-        );
-        return;
-      }
-      patchDealByOfferId(deal.offerId, {
-        contract: data.accept.contract,
-        accept: data.accept,
-        ...(data.acceptRecord ? { acceptRecord: data.acceptRecord } : {}),
-      });
-      router.push(`/deal/${encodeURIComponent(data.accept.contract)}`);
-    } catch (e) {
-      setAcceptError((e as Error).message);
     }
   };
 
@@ -486,41 +454,35 @@ export default function DealPage() {
         </Card>
       )}
 
-      {/* my deals */}
+      {/* my deals — read straight off the public board */}
       <section className="mt-10">
         <h2 className="heading-lg">Your deals</h2>
-        {deals.length === 0 && (boardDeals === null || boardDeals.length === 0) ? (
+        <p className="caption-sm mt-1 text-mute">Read live from the public board for this identity — nothing is stored in this browser.</p>
+        {boardList.length === 0 ? (
           <p className="caption-sm mt-3 text-mute">
             {boardBusy ? "Reading the board for your deals…" : "Nothing yet. Post an offer or accept one — it lands here."}
           </p>
         ) : (
           <div className="mt-3 space-y-2.5">
-            {pendingOffers.map((d) => (
-              <div key={d.offerId} className="flex flex-wrap items-center justify-between gap-2 rounded-[16px] border border-hairline bg-surface-card px-4 py-3">
-                <div className="min-w-0">
-                  <p className="body-sm-strong text-ink">Your offer · {shortContract(d.offer.id)}</p>
-                  <p className="caption-sm mt-0.5 text-mute">posted as payer · waiting for acceptance</p>
-                </div>
-                <div className="flex gap-2">
-                  <Button variant="secondary" onClick={() => void checkAcceptance(d)}>Check acceptance</Button>
-                </div>
-              </div>
-            ))}
-            {activeDeals.map((d) => (
-              <Link
-                key={d.contract}
-                href={`/deal/${encodeURIComponent(d.contract)}`}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-[16px] border border-hairline bg-surface-card px-4 py-3 transition-all hover:-translate-y-0.5 hover:border-brand-500/40 hover:shadow-soft"
-              >
-                <div className="min-w-0">
-                  <p className="body-sm-strong text-ink">{d.role === "payer" ? "Hiring" : "Working"} · {shortContract(d.contract)}</p>
-                  <p className="caption-sm mt-0.5 text-mute">{d.offer.job?.context ? d.offer.job.context.slice(0, 80) : "deal"}</p>
-                </div>
-                <StatusChip tone="ok">{d.role}</StatusChip>
-              </Link>
-            ))}
-            {boardExtra.map((b) =>
-              b.contract ? (
+            {boardList.map((b) => {
+              if (!b.contract) {
+                const expired = clock > 0 && clock >= b.offer.expiresMs;
+                return (
+                  <div key={b.offer.id} className="flex flex-wrap items-center justify-between gap-2 rounded-[16px] border border-dashed border-hairline bg-surface-card px-4 py-3">
+                    <div className="min-w-0">
+                      <p className="body-sm-strong text-ink">Your offer · {shortContract(b.offer.id)}</p>
+                      <p className="caption-sm mt-0.5 text-mute">posted as {b.role} · {expired ? "the offer window is closed" : "waiting for acceptance"}</p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {expired ? <StatusChip tone="warn">expired</StatusChip> : null}
+                      <Button variant="secondary" onClick={() => void checkBoardPending(b)} disabled={expired}>
+                        {expired ? "Expired" : "Check acceptance"}
+                      </Button>
+                    </div>
+                  </div>
+                );
+              }
+              return (
                 <Link
                   key={b.contract}
                   href={`/deal/${encodeURIComponent(b.contract)}`}
@@ -537,21 +499,18 @@ export default function DealPage() {
                   </div>
                   <StatusChip tone="ok">{b.role}</StatusChip>
                 </Link>
-              ) : (
-                <div key={b.offer.id} className="flex flex-wrap items-center justify-between gap-2 rounded-[16px] border border-dashed border-hairline bg-surface-card px-4 py-3">
-                  <div className="min-w-0">
-                    <p className="body-sm-strong text-ink">Your offer · {shortContract(b.offer.id)}</p>
-                    <p className="caption-sm mt-0.5 text-mute">posted as {b.role} · from the board · waiting for acceptance</p>
-                  </div>
-                  <Button variant="secondary" onClick={() => void checkBoardPending(b)}>Check acceptance</Button>
-                </div>
-              ),
-            )}
+              );
+            })}
           </div>
         )}
         {boardDealsError ? (
           <p className="caption-sm mt-3 text-amber-600">Board lookup: {boardDealsError}</p>
         ) : null}
+        <Note tone="info" className="mt-4">
+          tclk-offers is a rolling ring — the venue keeps only the newest ~2–3 hours of it. Once a deal is accepted,
+          publish the paper rail record and the lock <strong className="font-medium text-ink">right away</strong>: from
+          then on the deal lives in its own room and paper note on the public board, which do not roll.
+        </Note>
       </section>
 
       <Note tone="info" className="mt-8">

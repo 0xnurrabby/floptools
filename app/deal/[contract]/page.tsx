@@ -9,8 +9,6 @@ import { useSession } from "@/components/use-session";
 import { signDraft } from "@/lib/keyring";
 import { getClient } from "@/lib/client";
 import {
-  OFFERS_ROOM,
-  contractId,
   decodeFrame,
   dealRoom,
   encodeFrame,
@@ -42,7 +40,6 @@ interface Board {
   loaded: boolean;
   error: string | null;
   at: number;
-  localFallback: boolean;
 }
 
 type PairState =
@@ -62,7 +59,6 @@ export default function DealDetailPage() {
     loaded: false,
     error: null,
     at: 0,
-    localFallback: false,
   });
   const [fold, setFold] = useState<FoldResult | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -138,26 +134,8 @@ export default function DealDetailPage() {
 
     const pair = pairRef.current;
     const records: RecordInput[] = [];
-    let localFallback = false;
     if (pair.status === "found") {
       records.push(pair.offerRecord, pair.acceptRecord);
-    } else if (deal?.accept) {
-      // Offline / scrolled-out fallback: trust the local copy only if it
-      // really hashes to THIS contract id.
-      const computed = await contractId(deal.offer, {
-        from: deal.accept.from,
-        ref: deal.accept.ref,
-        statement: deal.accept.statement,
-        paymentKey: deal.accept.paymentKey,
-        nonce: deal.accept.nonce,
-      });
-      if (computed.toLowerCase() === contract.toLowerCase()) {
-        records.push(
-          deal.offerRecord ?? { room: OFFERS_ROOM, from: deal.offer.from, text: encodeFrame(deal.offer), seq: 0, ts: "", sig: undefined },
-          deal.acceptRecord ?? { room: OFFERS_ROOM, from: deal.accept.from, text: encodeFrame(deal.accept), seq: 0, ts: "", sig: undefined },
-        );
-        localFallback = true;
-      }
     }
     for (const m of dealRoomRead?.messages ?? []) {
       records.push({ room: dealRoomName, from: m.from, text: m.text, seq: m.seq, ts: m.ts, sig: m.sig });
@@ -173,10 +151,9 @@ export default function DealDetailPage() {
       loaded: true,
       error: pair.status === "error" ? `Could not read the board: ${pair.error}` : null,
       at: nowMs(),
-      localFallback,
     });
     return waitHeld;
-  }, [contract, dealRoomName, validContract, deal]);
+  }, [contract, dealRoomName, validContract]);
 
   useEffect(() => {
     loadPair();
@@ -203,7 +180,7 @@ export default function DealDetailPage() {
   useEffect(() => {
     if (!validContract) return;
     let cancelled = false;
-    void foldContract(board.records, board.paper, { contract }).then((f) => {
+    void foldContract(board.records, board.paper, { contract, now: board.at > 0 ? board.at : undefined }).then((f) => {
       if (!cancelled) setFold(f);
     });
     return () => {
@@ -455,6 +432,7 @@ export default function DealDetailPage() {
   type StepActionKind = "paper" | "lock" | "work" | "reveal" | "receipt" | "recheck";
   const actionForStep = (step: StepStatus["step"]): { label: string; kind: StepActionKind; disabled: boolean } | null => {
     if (!offer || !did || (!isPayer && !isPayee)) return null;
+    if (fold?.state === "expired") return null;
     switch (step) {
       case "paper":
         if (isPayer && fold?.state === "accepted" && !paper) {
@@ -527,7 +505,7 @@ export default function DealDetailPage() {
           tone={
             fold?.state === "claimed"
               ? "ok"
-              : fold?.state === "refunded" || fold?.state === "cancelled"
+              : fold?.state === "refunded" || fold?.state === "cancelled" || fold?.state === "expired"
                 ? "warn"
                 : pairState.status === "notfound"
                   ? "warn"
@@ -602,12 +580,13 @@ export default function DealDetailPage() {
         </div>
       ) : null}
 
-      {board.localFallback ? (
+      {pairState.status === "notfound" ? (
         <div className="mt-4">
           <Note tone="warn">
-            Showing the offer and accept from <strong className="font-medium text-ink">your local copy</strong> — the public
-            pair was not found in the retained ring of tclk-offers (the venue keeps only the newest ~10 MiB). The deal
-            room and paper rail below are still read live from the board.
+            This deal&apos;s offer+accept is not on the public board right now — it scrolled out of the venue&apos;s
+            retained ring (tclk-offers keeps only the newest ~10 MiB) or was never published here. Everything shown on
+            this page is read <strong className="font-medium text-ink">live from the public ledger</strong> (deal room +
+            paper rail); nothing is taken from this browser&apos;s local storage.
           </Note>
         </div>
       ) : null}
