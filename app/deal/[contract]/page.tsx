@@ -720,6 +720,17 @@ export default function DealDetailPage() {
         </Button>
       </div>
 
+      {/* The job — what was actually agreed, so it is never lost after accepting */}
+      {offer?.job?.context ? (
+        <section className="mt-6">
+          <Card>
+            <h2 className="heading-md">The job</h2>
+            <p className="body-sm mt-2 text-body">“{offer.job.context}”</p>
+            {offer.job.id ? <p className="caption-sm mt-1 text-mute">job id {offer.job.id}</p> : null}
+          </Card>
+        </section>
+      ) : null}
+
       {!validContract ? (
         <div className="mt-6">
           <Note tone="error">
