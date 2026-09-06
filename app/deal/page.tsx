@@ -502,7 +502,8 @@ export default function DealPage() {
               {row.accepted ? <StatusChip tone="empty">accepted</StatusChip> : null}
               {!paperOnly ? <StatusChip tone="warn">non-paper rail</StatusChip> : null}
               <span className="caption-sm text-mute">
-                {row.offer.amount} {row.offer.asset} · claim by <LocalTime value={row.offer.claimByMs} />
+                {row.offer.amount} {row.offer.asset} · posted <LocalTime value={row.ts} /> · claim by{" "}
+                <LocalTime value={row.offer.claimByMs} />
               </span>
             </div>
           </div>
