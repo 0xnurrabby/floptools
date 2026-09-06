@@ -217,6 +217,140 @@ export default function ActivityPage() {
         for $FLOP&rdquo; spam, which gets filtered anyway.
       </p>
 
+      {/* The ritual — do these in order, then repeat every 2–3 days */}
+      <section className="mt-8">
+        <div className="rounded-[12px] border border-hairline bg-surface-card p-5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="heading-sm text-ink">Your 1–3 day ritual</h2>
+            <span className="caption-sm text-mute">do it in order · repeat every 2–3 days</span>
+          </div>
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <RitualStep
+              n="1"
+              tone="bg-acc-leaf text-white"
+              tint="bg-tint-leaf border-acc-leaf/30"
+              title="Publish DID note"
+              body="Once, right now. Makes your key visible and durable on the ledger."
+            />
+            <RitualStep
+              n="2"
+              tone="bg-acc-sky text-white"
+              tint="bg-tint-sky border-acc-sky/30"
+              title="Sign every check-in"
+              body="One tap each below — templates flip to Used after you sign."
+              href="#templates"
+            />
+            <RitualStep
+              n="3"
+              tone="bg-acc-amber text-white"
+              tint="bg-tint-amber border-acc-amber/30"
+              title="Repeat in 2–3 days"
+              body="Same key, steady presence. That is the whole ask."
+            />
+          </div>
+        </div>
+      </section>
+
+{/* DID note */}
+      <section className="mt-12">
+        <h2 className="heading-lg">DID note & mailbox</h2>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-[12px] border border-acc-leaf/30 bg-tint-leaf p-4">
+            <p className="body-sm-strong text-ink">Publish DID note · do this once</p>
+            <p className="caption-sm mt-1 text-body">
+              Writes your public key to the durable store at{" "}
+              <code className="rounded-sm bg-surface-soft px-1 py-0.5 font-mono text-[12px]">/kv/did-&lt;shard&gt;/&lt;key&gt;</code>.
+              This is the &ldquo;this key is me&rdquo; record that /check and other
+              tools read. Do it right after creating your identity.
+            </p>
+          </div>
+          <div className="rounded-[12px] border border-acc-sky/30 bg-tint-sky p-4">
+            <p className="body-sm-strong text-ink">Mint mailbox name · optional</p>
+            <p className="caption-sm mt-1 text-body">
+              Creates an unguessable private address (mb-p-…) where others can
+              DM you directly, signed-only. You do not need it for onboarding;
+              skip it and add it later only if someone should message you.
+            </p>
+          </div>
+        </div>
+        <div className="mt-4">
+          <Note tone="info">
+            <strong className="font-medium text-ink">How to use them:</strong> publish the note once (a fresh write
+            every few weeks keeps it alive). The mailbox is an extra: mint the name only when you want to receive
+            private messages. You can re-open this page anytime to add it; nothing about the note changes until you
+            re-publish with the mailbox token.
+          </Note>
+        </div>
+        {!did ? (
+          <div className="mt-4">
+            <Note tone="warn">
+              No identity in memory.{" "}
+              <Link className="font-medium text-ink underline underline-offset-2" href="/create">Create one</Link>{" "}
+              or restore it.
+            </Note>
+          </div>
+        ) : (
+          <Card className="mt-4">
+            <div className="flex flex-col gap-4">
+              {mailbox ? (
+                <Field label="Mailbox token">
+                  <TextInput value={mailbox} readOnly mono />
+                </Field>
+              ) : null}
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  onClick={() => publishNote({ mailbox: mailbox && includeMailbox ? mailbox : undefined })}
+                  disabled={noteBusy || !did}
+                >
+                  {noteBusy ? "Publishing…" : mailbox ? "Publish note (with mailbox)" : "Publish DID note"}
+                </Button>
+                <Button variant="secondary" onClick={makeMailbox}>Mint mailbox name</Button>
+                {mailbox ? (
+                  <label className="flex items-center gap-2 text-sm text-charcoal">
+                    <input
+                      type="checkbox"
+                      checked={includeMailbox}
+                      onChange={(e) => setIncludeMailbox(e.target.checked)}
+                      className="h-4 w-4 rounded-sm accent-ink"
+                    />
+                    include
+                  </label>
+                ) : null}
+              </div>
+              {noteResult ? (
+                <div>
+                  <Note tone={noteResult.ok ? "ok" : "warn"}>{noteResult.message}</Note>
+                  {noteResult.value ? (
+                    <pre className="mt-2 overflow-x-auto rounded-[8px] bg-surface-soft p-3 font-mono text-[13px] text-ink">{noteResult.value}</pre>
+                  ) : null}
+                  {!noteResult.ok ? (
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Button
+                        variant="secondary"
+                        onClick={() =>
+                          publishNote({ mailbox: mailbox && includeMailbox ? mailbox : undefined })
+                        }
+                      >
+                        Try again
+                      </Button>
+                      <Button
+                        variant="secondary"
+                        onClick={() =>
+                          publishNote({ mailbox: mailbox && includeMailbox ? mailbox : undefined, force: true })
+                        }
+                      >
+                        Publish as my key (unconditional)
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </Card>
+        )}
+      </section>
+
+      
       {/* AI personalization */}
       <section className="mt-10">
         <h2 className="heading-lg">Unique check-ins, per person</h2>
@@ -326,115 +460,6 @@ export default function ActivityPage() {
         </div>
       </section>
 
-      {/* DID note */}
-      <section className="mt-12">
-        <h2 className="heading-lg">DID note & mailbox</h2>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <div className="rounded-[12px] border border-acc-leaf/30 bg-tint-leaf p-4">
-            <p className="body-sm-strong text-ink">Publish DID note · do this once</p>
-            <p className="caption-sm mt-1 text-body">
-              Writes your public key to the durable store at{" "}
-              <code className="rounded-sm bg-surface-soft px-1 py-0.5 font-mono text-[12px]">/kv/did-&lt;shard&gt;/&lt;key&gt;</code>.
-              This is the &ldquo;this key is me&rdquo; record that /check and other
-              tools read. Do it right after creating your identity.
-            </p>
-          </div>
-          <div className="rounded-[12px] border border-acc-sky/30 bg-tint-sky p-4">
-            <p className="body-sm-strong text-ink">Mint mailbox name · optional</p>
-            <p className="caption-sm mt-1 text-body">
-              Creates an unguessable private address (mb-p-…) where others can
-              DM you directly, signed-only. You do not need it for onboarding;
-              skip it and add it later only if someone should message you.
-            </p>
-          </div>
-        </div>
-        <div className="mt-4">
-          <Note tone="info">
-            <strong className="font-medium text-ink">How to use them:</strong> publish the note once (a fresh write
-            every few weeks keeps it alive). The mailbox is an extra: mint the name only when you want to receive
-            private messages. You can re-open this page anytime to add it; nothing about the note changes until you
-            re-publish with the mailbox token.
-          </Note>
-        </div>
-        {!did ? (
-          <div className="mt-4">
-            <Note tone="warn">
-              No identity in memory.{" "}
-              <Link className="font-medium text-ink underline underline-offset-2" href="/create">Create one</Link>{" "}
-              or restore it.
-            </Note>
-          </div>
-        ) : (
-          <Card className="mt-4">
-            <div className="flex flex-col gap-4">
-              {mailbox ? (
-                <Field label="Mailbox token">
-                  <TextInput value={mailbox} readOnly mono />
-                </Field>
-              ) : null}
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  onClick={() => publishNote({ mailbox: mailbox && includeMailbox ? mailbox : undefined })}
-                  disabled={noteBusy || !did}
-                >
-                  {noteBusy ? "Publishing…" : mailbox ? "Publish note (with mailbox)" : "Publish DID note"}
-                </Button>
-                <Button variant="secondary" onClick={makeMailbox}>Mint mailbox name</Button>
-                {mailbox ? (
-                  <label className="flex items-center gap-2 text-sm text-charcoal">
-                    <input
-                      type="checkbox"
-                      checked={includeMailbox}
-                      onChange={(e) => setIncludeMailbox(e.target.checked)}
-                      className="h-4 w-4 rounded-sm accent-ink"
-                    />
-                    include
-                  </label>
-                ) : null}
-              </div>
-              {noteResult ? (
-                <div>
-                  <Note tone={noteResult.ok ? "ok" : "warn"}>{noteResult.message}</Note>
-                  {noteResult.value ? (
-                    <pre className="mt-2 overflow-x-auto rounded-[8px] bg-surface-soft p-3 font-mono text-[13px] text-ink">{noteResult.value}</pre>
-                  ) : null}
-                  {!noteResult.ok ? (
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <Button
-                        variant="secondary"
-                        onClick={() =>
-                          publishNote({ mailbox: mailbox && includeMailbox ? mailbox : undefined })
-                        }
-                      >
-                        Try again
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        onClick={() =>
-                          publishNote({ mailbox: mailbox && includeMailbox ? mailbox : undefined, force: true })
-                        }
-                      >
-                        Publish as my key (unconditional)
-                      </Button>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          </Card>
-        )}
-      </section>
-
-      {/* Keep alive */}
-      <section className="mt-12">
-        <h2 className="heading-lg">Keep it alive</h2>
-        <div className="mt-4 grid gap-2 sm:grid-cols-3">
-          <Rule title="Same key" body="One identity for the whole journey." />
-          <Rule title="Back up" body="File + passphrase, kept separate." />
-          <Rule title="Check" body="Run /check to see your status." />
-        </div>
-      </section>
-
       {/* Mailbox anatomy */}
       <section className="mt-12">
         <h2 className="heading-lg">Mailbox, briefly</h2>
@@ -456,6 +481,39 @@ export default function ActivityPage() {
   );
 }
 
+function RitualStep({
+  n,
+  tone,
+  tint,
+  title,
+  body,
+  href,
+}: {
+  n: string;
+  tone: string;
+  tint: string;
+  title: string;
+  body: string;
+  href?: string;
+}) {
+  const inner = (
+    <>
+      <span className={`flex h-7 w-7 items-center justify-center rounded-full font-mono text-[13px] ${tone}`}>
+        {n}
+      </span>
+      <p className="body-sm-strong mt-2 text-ink">{title}</p>
+      <p className="caption-sm mt-1 text-body">{body}</p>
+    </>
+  );
+  return href ? (
+    <a href={href} className={`rounded-[12px] border p-4 transition-transform hover:-translate-y-0.5 ${tint}`}>
+      {inner}
+    </a>
+  ) : (
+    <div className={`rounded-[12px] border p-4 ${tint}`}>{inner}</div>
+  );
+}
+
 function timeAgo(ms: number): string {
   const diff = Date.now() - ms;
   const mins = Math.floor(diff / 60000);
@@ -464,13 +522,4 @@ function timeAgo(ms: number): string {
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs} hr ago`;
   return `${Math.floor(hrs / 24)} d ago`;
-}
-
-function Rule({ title, body }: { title: string; body: React.ReactNode }) {
-  return (
-    <div className="rounded-[12px] border border-hairline bg-surface-soft p-4">
-      <p className="body-sm-strong text-ink">{title}</p>
-      <p className="caption-sm mt-1 text-body">{body}</p>
-    </div>
-  );
 }
