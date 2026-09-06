@@ -33,7 +33,7 @@ export function SessionBanner() {
           </p>
         </div>
         <p className="caption-sm min-w-0 shrink-0 text-on-dark-mute sm:shrink">
-          <span className="hidden sm:inline">key in memory only · </span>
+          <span className="hidden sm:inline">stays unlocked on this device · </span>
           <span className="font-mono">z6Mk…{tail}</span>
         </p>
       </div>

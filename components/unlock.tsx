@@ -48,8 +48,8 @@ export function UnlockIdentity() {
       <h2 className="heading-md">Identity found in this browser</h2>
       <p className="caption-sm mt-1 text-body">
         <span className="font-mono font-medium text-ink">{identityShortName(stored.public.did)}</span>
-        {" "}is stored here (encrypted). Unlock with your passphrase; the key
-        stays in memory only, so a reload asks again.
+        {" "}is stored here (encrypted). Unlock once with your passphrase — it stays
+        unlocked on this device until you Lock or switch identity.
       </p>
       <div className="mt-4 flex flex-col gap-3 sm:flex-row">
         <TextInput

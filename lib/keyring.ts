@@ -20,6 +20,7 @@ import { sweep, assertMessageLength } from "./sweep";
 import { nextNonce, createLocalNonceStore } from "./nonce";
 
 const STORED_IDENTITY_KEY = "floptools.identity.enc";
+const UNLOCK_CACHE_KEY = "floptools.unlock.v1";
 
 let current: UnlockedIdentity | null = null;
 let lastFile: IdentityFile | null = null;
@@ -39,6 +40,48 @@ function emit(): void {
   for (const fn of listeners) fn();
 }
 
+/* ---- convenience unlock cache: once unlocked, stays unlocked until lock ---- */
+
+function cacheUnlock(passphrase: string): void {
+  try {
+    localStorage.setItem(UNLOCK_CACHE_KEY, passphrase);
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+function clearUnlockCache(): void {
+  try {
+    localStorage.removeItem(UNLOCK_CACHE_KEY);
+  } catch {
+    /* noop */
+  }
+}
+
+function tryAutoUnlock(): void {
+  if (typeof window === "undefined" || current) return;
+  try {
+    const pass = localStorage.getItem(UNLOCK_CACHE_KEY);
+    const raw = localStorage.getItem(STORED_IDENTITY_KEY);
+    if (!pass || !raw) return;
+    const file = JSON.parse(raw) as unknown;
+    if (!isIdentityFile(file)) return;
+    void decryptIdentity(file, pass)
+      .then((unlocked) => {
+        if (current) return;
+        current = unlocked;
+        lastFile = file;
+        emit();
+      })
+      .catch(() => {
+        /* bad cache — fall back to the unlock prompt */
+      });
+  } catch {
+    /* noop */
+  }
+}
+tryAutoUnlock();
+
 export function generateIdentityKeypair() {
   const seed = crypto.getRandomValues(new Uint8Array(32));
   const publicKey = publicKeyFromSeed(seed);
@@ -51,7 +94,11 @@ export interface NewIdentityResult {
   unlocked: UnlockedIdentity;
 }
 
-export async function createIdentity(passphrase: string): Promise<NewIdentityResult> {
+export async function createIdentity(
+  passphrase: string,
+  opts: { keepUnlocked?: boolean } = {},
+): Promise<NewIdentityResult> {
+  const keepUnlocked = opts.keepUnlocked ?? true;
   const { seed, publicKey, did } = generateIdentityKeypair();
   const identity = await encryptIdentity(seed, did, publicKey, passphrase);
   const unlocked: UnlockedIdentity = {
@@ -62,6 +109,8 @@ export async function createIdentity(passphrase: string): Promise<NewIdentityRes
   };
   current = unlocked;
   lastFile = identity;
+  if (keepUnlocked) cacheUnlock(passphrase);
+  else clearUnlockCache();
   emit();
   return { identity, unlocked };
 }
@@ -69,10 +118,14 @@ export async function createIdentity(passphrase: string): Promise<NewIdentityRes
 export async function unlockFromFile(
   file: IdentityFile,
   passphrase: string,
+  opts: { keepUnlocked?: boolean } = {},
 ): Promise<UnlockedIdentity> {
+  const keepUnlocked = opts.keepUnlocked ?? true;
   const unlocked = await decryptIdentity(file, passphrase);
   current = unlocked;
   lastFile = file;
+  if (keepUnlocked) cacheUnlock(passphrase);
+  else clearUnlockCache();
   emit();
   return unlocked;
 }
@@ -80,6 +133,7 @@ export async function unlockFromFile(
 export function lock(): void {
   current = null;
   lastFile = null;
+  clearUnlockCache();
   emit();
 }
 

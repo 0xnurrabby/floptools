@@ -123,8 +123,14 @@ canonical text is at https://technocore.chat/llms.txt and /auth.md.
 ## Security / threat model
 
 - **Private key** is generated and held only in browser memory while unlocked,
-  or encrypted at rest (AES-256-GCM, PBKDF2-SHA256). No plaintext key is ever
-  written to localStorage or sent anywhere.
+  or encrypted at rest (AES-256-GCM, PBKDF2-SHA256). The seed itself is never
+  written to localStorage in plaintext.
+- **Convenience unlock:** after you create/import an identity, it stays
+  unlocked on that device (the encrypted copy plus a local unlock cache) until
+  you explicitly **Lock** or switch to a new identity — no passphrase prompts
+  on reload. Anyone with access to the browser can then use that identity;
+  toggle "Stay unlocked" off at /create if you prefer a fresh unlock each
+  session. Lock clears the cache; keys are never sent anywhere.
 - The only server side is a **read-only, host-pinned GET proxy** for public
   Technocore reads. It cannot be coerced into forwarding a private key (it
   accepts no body and the URL host is validated).

@@ -36,6 +36,7 @@ export default function CreatePage() {
   const [pass, setPass] = useState("");
   const [pass2, setPass2] = useState("");
   const [keepInBrowser, setKeepInBrowser] = useState(true);
+  const [keepUnlocked, setKeepUnlocked] = useState(true);
 
   // import card
   const [importMode, setImportMode] = useState<"file" | "paste">("file");
@@ -91,7 +92,7 @@ export default function CreatePage() {
           publicKeyFromSeed(resolved.seed),
           importNewPass,
         );
-        await unlockFromFile(file, importNewPass);
+        await unlockFromFile(file, importNewPass, { keepUnlocked });
         saveEncryptedIdentity(file);
         const filename = identityFilenameFor(resolved.did);
         downloadFile(file, filename);
@@ -102,7 +103,7 @@ export default function CreatePage() {
       } else {
         // floptools encrypted: reuse the already-decrypted result
         const file = JSON.parse(importText) as IdentityFile;
-        await unlockFromFile(file, importSourcePass);
+        await unlockFromFile(file, importSourcePass, { keepUnlocked });
         saveEncryptedIdentity(file);
         void trackDid(file.public.did, "restore");
         setNotice(`Unlocked as ${identityShortName(file.public.did)}. Encrypted copy saved in this browser.`);
@@ -144,7 +145,7 @@ export default function CreatePage() {
         return;
       }
 
-      const { identity } = await createIdentity(pass);
+      const { identity } = await createIdentity(pass, { keepUnlocked });
 
       // Record (double-checked server-side). Denied => lock and drop.
       const commit = await fetch("/api/limits", {
@@ -228,7 +229,16 @@ export default function CreatePage() {
                 onChange={(e) => setKeepInBrowser(e.target.checked)}
                 className="h-4 w-4 rounded-sm accent-ink"
               />
-              Keep encrypted copy here (recommended: unlock with passphrase only)
+              <span className="caption-sm text-mute">Keep encrypted copy here (encrypted file for backup)</span>
+            </label>
+            <label className="flex items-center gap-2 text-sm text-charcoal">
+              <input
+                type="checkbox"
+                checked={keepUnlocked}
+                onChange={(e) => setKeepUnlocked(e.target.checked)}
+                className="h-4 w-4 rounded-sm accent-ink"
+              />
+              Stay unlocked on this device (no passphrase prompts until Lock)
             </label>
             <Button onClick={onCreate} disabled={busy !== null || !!did} className="w-full">
               {busy === "create" ? "Generating…" : did ? "Identity already unlocked" : "Generate & encrypt"}
