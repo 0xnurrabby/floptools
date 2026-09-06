@@ -116,6 +116,9 @@ export async function ensureSchema(): Promise<void> {
     await p.query(`CREATE INDEX IF NOT EXISTS idx_tc_frames_did ON trustcore_frames (did)`);
     await p.query(`CREATE INDEX IF NOT EXISTS idx_tc_frames_contract ON trustcore_frames (contract_id)`);
     await p.query(`CREATE INDEX IF NOT EXISTS idx_tc_frames_created ON trustcore_frames (created_at)`);
+    // Reveal preimages must survive the DB round-trip: buildDealStates only
+    // marks a deal "claimed" when it can see the reveal secret.
+    await p.query(`ALTER TABLE trustcore_frames ADD COLUMN IF NOT EXISTS secret TEXT`);
     // Deal rooms the app has seen — Trustcore scans these so a deal's
     // lock/reveal/receipt frames are picked up even after the offer+accept
     // scrolls out of the tclk-offers tail.

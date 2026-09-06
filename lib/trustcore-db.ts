@@ -22,6 +22,7 @@ export function frameFromRow(r: Row): TclkFrame {
     outcome: (r["outcome"] as string) ?? undefined,
     rail: (r["rail"] as string) ?? undefined,
     lockKind: (r["lock_kind"] as string) ?? undefined,
+    secret: (r["secret"] as string) ?? undefined,
     rawText: String(r["raw_text"] ?? ""),
   };
 }
