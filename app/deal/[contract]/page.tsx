@@ -649,22 +649,32 @@ export default function DealDetailPage() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0">
                 <p className="body-sm-strong text-ink">Next: {guard.action}</p>
-                <p className="caption-sm mt-1 text-body">{guard.reason}</p>
+                <p className="caption-sm mt-1 text-body">
+                  {isPayer ? (
+                    <span className="font-medium text-brand-700">You are the payer.</span>
+                  ) : (
+                    <span className="font-medium text-leaf-600">You are the payee.</span>
+                  )}{" "}
+                  {guard.reason}
+                  {fold?.state === "accepted" && isPayee && offer ? (
+                    <> The payer is <span className="font-mono">identity_{offer.from.slice(-4)}</span> — their move, not yours. After the lock your turn starts: submit the work, then reveal.</>
+                  ) : null}
+                </p>
               </div>
               <div className="flex flex-wrap gap-2">
                 {fold?.state === "accepted" && isPayer && !paper ? (
                   <Button onClick={() => void writePaperRecord()} disabled={busy !== null}>
-                    {busy === "paper" ? <Spinner label="…" /> : "Write paper rail record"}
+                    {busy === "paper" ? <Spinner label="…" /> : "1 · Write paper rail record"}
                   </Button>
                 ) : null}
                 {fold?.state === "accepted" && isPayer && paper ? (
                   <Button onClick={() => void postLock()} disabled={busy !== null}>
-                    {busy === "lock" ? <Spinner label="…" /> : "Post lock"}
+                    {busy === "lock" ? <Spinner label="…" /> : "2 · Post lock"}
                   </Button>
                 ) : null}
                 {fold?.state === "accepted" && isPayer && paper && !paperMatches(paper) ? (
                   <Button variant="secondary" onClick={() => void writePaperRecord(true)} disabled={busy !== null}>
-                    {busy === "paper" ? <Spinner label="…" /> : "Overwrite rail record"}
+                    {busy === "paper" ? <Spinner label="…" /> : "Fix rail record"}
                   </Button>
                 ) : null}
                 {fold?.state === "locked" && isPayee ? (
