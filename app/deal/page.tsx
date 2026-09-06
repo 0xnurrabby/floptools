@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, Card, Field, Note, Spinner, StatusChip, TextArea, TextInput } from "@/components/ui";
@@ -11,6 +11,7 @@ import { getClient } from "@/lib/client";
 import {
   OFFERS_ROOM,
   dealRoom,
+  decodeFrame,
   encodeFrame,
   generateHashLock,
   makeAccept,
@@ -72,6 +73,8 @@ export default function DealPage() {
   const [offersError, setOffersError] = useState<string | null>(null);
   const [acceptBusy, setAcceptBusy] = useState<string | null>(null);
   const [acceptError, setAcceptError] = useState<string | null>(null);
+  // high-water seq of the offers room for the live tail long-poll
+  const lastOffersSeqRef = useRef(0);
   // search a did / identity suffix for its job posts
   const [searchDid, setSearchDid] = useState("");
   const [searchResults, setSearchResults] = useState<OfferRow[] | null>(null);
@@ -86,6 +89,13 @@ export default function DealPage() {
   const [clock, setClock] = useState(0);
 
   const boardList = boardDeals ?? [];
+
+  // Find-a-job shows only jobs still up for grabs: not accepted by any agent,
+  // and not past their open window. (Search keeps accepted rows so you can
+  // still see what a given identity posted.)
+  const openOffers = offers.filter(
+    (o) => !o.accepted && !(offersAt > 0 && offersAt > o.offer.expiresMs),
+  );
 
   useEffect(() => {
     const t = setInterval(() => setClock(Date.now()), 30_000);
@@ -140,6 +150,8 @@ export default function DealPage() {
           return;
         }
         setOffers(data.offers);
+        const maxSeq = data.offers.reduce((m, o) => Math.max(m, o.seq), lastOffersSeqRef.current);
+        lastOffersSeqRef.current = Math.max(lastOffersSeqRef.current, maxSeq);
       })
       .catch((e: unknown) => {
         if (!silent) setOffersError((e as Error).message);
@@ -154,6 +166,71 @@ export default function DealPage() {
     const t = setInterval(() => loadOffers(true), 30_000);
     return () => clearInterval(t);
   }, [loadOffers]);
+
+  /**
+   * Live tail: long-poll the offers room so a new job or a new accept lands
+   * on screen within seconds, not after the next 30s full reload. New offers
+   * are merged in; an accept marks its offer taken (it then disappears).
+   */
+  useEffect(() => {
+    let cancelled = false;
+    const loop = async () => {
+      if (cancelled) return;
+      let waitHeld = false;
+      try {
+        const read = await getClient().readRoom(OFFERS_ROOM, {
+          since: lastOffersSeqRef.current,
+          limit: 200,
+          wait: 10,
+        });
+        waitHeld = !(read.rawBody.includes('"wait_held":false') ?? false);
+        if (read.messages.length > 0) {
+          const maxSeq = Math.max(...read.messages.map((m) => m.seq));
+          if (maxSeq > lastOffersSeqRef.current) lastOffersSeqRef.current = maxSeq;
+          const freshOffers = new Map<string, OfferRow>();
+          const accepted = new Set<string>();
+          for (const m of read.messages) {
+            const f = decodeFrame(m.text);
+            if (!f) continue;
+            if (f.type === "offer") {
+              freshOffers.set(f.id, { offer: f, from: m.from, seq: m.seq, ts: m.ts, accepted: false });
+            } else if (f.type === "accept" && f.ref) {
+              accepted.add(f.ref);
+            }
+          }
+          setOffers((prev) => {
+            const next = [...prev];
+            for (const [id, row] of freshOffers) {
+              const idx = next.findIndex((r) => r.offer.id === id);
+              if (idx >= 0) {
+                if (row.seq >= next[idx].seq) next[idx] = row;
+              } else {
+                next.unshift(row);
+              }
+            }
+            for (const r of next) {
+              if (accepted.has(r.offer.id)) r.accepted = true;
+            }
+            return next;
+          });
+          setOffersAt(nowMs());
+        }
+        // The venue ring can rotate a reaped room's seq back — never let the
+        // cursor outrun it.
+        if (read.last_seq < lastOffersSeqRef.current) lastOffersSeqRef.current = 0;
+      } catch {
+        /* transient — retry after a short sleep */
+      }
+      if (!cancelled) {
+        if (!waitHeld) await new Promise((r) => setTimeout(r, 3000));
+        void loop();
+      }
+    };
+    void loop();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const runSearch = useCallback((query: string) => {
     const q = query.trim();
@@ -547,10 +624,10 @@ export default function DealPage() {
                 </p>
                 {searchResults.map(renderOfferRow)}
               </>
-            ) : offers.length === 0 && !offersBusy ? (
+            ) : openOffers.length === 0 && !offersBusy ? (
               <p className="caption-sm text-mute">No open offers right now. Post one yourself, or check again.</p>
             ) : (
-              offers.map(renderOfferRow)
+              openOffers.map(renderOfferRow)
             )}
           </div>
         </Card>

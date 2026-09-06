@@ -8,6 +8,7 @@ import {
 } from "@/lib/tclk-deal";
 import { isValidDid } from "@/lib/didkey";
 import { fetchOffersExport, parseOffersExport } from "@/lib/offers-ring";
+import { safeQuery } from "@/lib/db";
 
 /**
  * Locate a tclk/1 offer+accept pair on the public board by contract id (or
@@ -88,7 +89,25 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       .map((x) => ({ ...x, accepted: acceptRefs.has(x.offer.id) }))
       .sort((a, b) => (a.ts === b.ts ? b.seq - a.seq : a.ts < b.ts ? 1 : -1));
     if (matchFrom) out = out.filter((x) => matchFrom(x.offer.from));
-    return NextResponse.json({ offers: out.slice(0, 100), ...(matchFrom ? { searchedFrom: fromParam } : {}) });
+    // An accept can have scrolled out of the retained ring while the offer is
+    // still in it — the durable Trustcore frame store knows, so an accepted
+    // job is never presented as open again.
+    if (out.length > 0) {
+      try {
+        const ids = out.map((x) => x.offer.id);
+        const rows = (await safeQuery(
+          `SELECT DISTINCT ref FROM trustcore_frames WHERE frame_type = 'accept' AND ref = ANY($1::text[])`,
+          [ids],
+        )) ?? [];
+        const accepted = new Set(rows.map((r) => String(r["ref"])));
+        for (const x of out) {
+          if (accepted.has(x.offer.id)) x.accepted = true;
+        }
+      } catch {
+        /* DB unreachable — the ring's own accepts still cover the fresh ones */
+      }
+    }
+    return NextResponse.json({ offers: out.slice(0, 200), ...(matchFrom ? { searchedFrom: fromParam } : {}) });
   }
 
   if (contract) {
