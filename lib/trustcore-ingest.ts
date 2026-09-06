@@ -143,16 +143,17 @@ export async function ingestNow(): Promise<{ ok: boolean; frames: number; error?
       }
       const storedExport = await storeFrames(offerFrames);
 
-      // 2. Deal rooms: the remembered ones first (they hold completion frames
-      //    even after the pair left the tail), then export-derived rooms by
-      //    most recent activity — so a scan always covers the newest deals.
+      // 2. Deal rooms: the remembered ones are ALWAYS scanned (they hold a
+      //    deal's completion frames even after its pair left the tail — never
+      //    let the recency window drop them), then export-derived rooms by
+      //    most recent activity, so a scan also covers the newest deals.
       const remembered = await knownDealRooms();
       const exportRooms = [...dealRooms].sort(
         (a, b) => (latestByRoom.get(b) ?? 0) - (latestByRoom.get(a) ?? 0),
       );
       const roomsToScan = [
-        ...remembered.filter((r) => !dealRooms.has(r)),
-        ...exportRooms,
+        ...remembered,
+        ...exportRooms.filter((r) => !remembered.includes(r)),
       ].slice(0, MAX_DEAL_ROOMS);
 
       // 3. Read the rooms with a small concurrency pool (each room is tiny;
