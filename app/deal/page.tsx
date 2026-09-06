@@ -10,7 +10,6 @@ import { signDraft } from "@/lib/keyring";
 import { getClient } from "@/lib/client";
 import {
   OFFERS_ROOM,
-  decodeFrame,
   encodeFrame,
   generateHashLock,
   makeAccept,
@@ -118,38 +117,33 @@ export default function DealPage() {
     loadBoardDeals(did);
   }, [did, loadBoardDeals]);
 
-  const loadOffers = useCallback(() => {
-    setOffersBusy(true);
-    setOffersError(null);
-    getClient()
-      .readRoom(OFFERS_ROOM, { limit: 200 })
-      .then((room) => {
-        const rows: OfferRow[] = [];
-        const acceptRefs = new Set<string>();
-        for (const m of room.messages) {
-          const frame = decodeFrame(m.text);
-          if (!frame) continue;
-          if (frame.type === "accept") acceptRefs.add(frame.ref);
+  const loadOffers = useCallback((silent = false) => {
+    if (!silent) {
+      setOffersBusy(true);
+      setOffersError(null);
+    }
+    fetch("/api/tc/deal-lookup?offers=1")
+      .then((res) => res.json() as Promise<{ offers?: OfferRow[]; error?: string }>)
+      .then((data) => {
+        if (!data.offers) {
+          setOffersError(data.error ?? "Could not read offers from the board.");
+          return;
         }
-        for (const m of room.messages) {
-          const frame = decodeFrame(m.text);
-          if (!frame || frame.type !== "offer") continue;
-          rows.push({
-            offer: frame,
-            from: m.from,
-            seq: m.seq,
-            ts: m.ts,
-            accepted: acceptRefs.has(frame.id),
-          });
-        }
-        setOffers(rows.reverse());
+        setOffers(data.offers);
       })
-      .catch((e: unknown) => setOffersError((e as Error).message))
+      .catch((e: unknown) => {
+        if (!silent) setOffersError((e as Error).message);
+      })
       .finally(() => {
         setOffersAt(nowMs());
         setOffersBusy(false);
       });
   }, []);
+
+  useEffect(() => {
+    const t = setInterval(() => loadOffers(true), 30_000);
+    return () => clearInterval(t);
+  }, [loadOffers]);
 
   const postOffer = async () => {
     if (!did) return;
@@ -220,15 +214,28 @@ export default function DealPage() {
     setAcceptError(null);
     try {
       const res = await fetch(`/api/tc/deal-lookup?offerId=${encodeURIComponent(deal.offer.id)}`);
-      const data = (await res.json()) as { found?: boolean; error?: string; accept?: AcceptFrame; acceptRecord?: RecordInput };
+      const data = (await res.json()) as {
+        found?: boolean;
+        offerPresent?: boolean;
+        offer?: OfferFrame;
+        error?: string;
+        accept?: AcceptFrame;
+        acceptRecord?: RecordInput;
+      };
       if (!res.ok) {
         setAcceptError(data.error ?? `Lookup failed (HTTP ${res.status}).`);
         return;
       }
       if (!data.found || !data.accept) {
-        setAcceptError(
-          "Not accepted yet — or the accept has scrolled out of the venue ring (tclk-offers keeps only the newest ~10 MiB). Post a fresh offer if it has been a while.",
-        );
+        if (data.offerPresent && data.offer) {
+          setAcceptError(
+            `Still waiting for acceptance — no accept on the board yet. The offer stays open until ${fmt(data.offer.expiresMs)}.`,
+          );
+        } else {
+          setAcceptError(
+            "This offer has scrolled out of the venue ring (tclk-offers keeps only the newest ~2–3 hours). It can no longer be found or accepted — post a fresh offer.",
+          );
+        }
         return;
       }
       if (!findDealByOfferId(deal.offer.id)) {
@@ -395,10 +402,10 @@ export default function DealPage() {
               </span>
               <div>
                 <h2 className="heading-md">Open offers on the board</h2>
-                <p className="caption-sm text-body">The newest ~200 offers in tclk-offers. Accept one, mint a secret, and the deal room is derived for both of you.</p>
+                <p className="caption-sm text-body">Every offer on the board right now (the venue ring). Accept one, mint a secret, and the deal room is derived for both of you.</p>
               </div>
             </div>
-            <Button variant="secondary" onClick={loadOffers} disabled={offersBusy} className="shrink-0">
+            <Button variant="secondary" onClick={() => loadOffers()} disabled={offersBusy} className="shrink-0">
               {offersBusy ? <Spinner label="…" /> : "Refresh"}
             </Button>
           </div>
@@ -468,16 +475,23 @@ export default function DealPage() {
               if (!b.contract) {
                 const expired = clock > 0 && clock >= b.offer.expiresMs;
                 return (
-                  <div key={b.offer.id} className="flex flex-wrap items-center justify-between gap-2 rounded-[16px] border border-dashed border-hairline bg-surface-card px-4 py-3">
+                  <div
+                    key={b.offer.id}
+                    onClick={() => void checkBoardPending(b)}
+                    className="flex w-full cursor-pointer flex-wrap items-center justify-between gap-2 rounded-[16px] border border-dashed border-hairline bg-surface-card px-4 py-3 text-left transition-all hover:-translate-y-0.5 hover:border-brand-500/40 hover:shadow-soft"
+                  >
                     <div className="min-w-0">
                       <p className="body-sm-strong text-ink">Your offer · {shortContract(b.offer.id)}</p>
-                      <p className="caption-sm mt-0.5 text-mute">posted as {b.role} · {expired ? "the offer window is closed" : "waiting for acceptance"}</p>
+                      <p className="caption-sm mt-0.5 text-mute">
+                        posted as {b.role} · open until {fmt(b.offer.expiresMs)} ·{" "}
+                        {expired ? "the offer window is closed" : "click to check acceptance"}
+                      </p>
                     </div>
-                    <div className="flex items-center gap-2">
+                    <div className="flex shrink-0 items-center gap-2">
                       {expired ? <StatusChip tone="warn">expired</StatusChip> : null}
-                      <Button variant="secondary" onClick={() => void checkBoardPending(b)} disabled={expired}>
+                      <span className="body-sm rounded-full border border-hairline bg-canvas px-4 py-2 text-ink">
                         {expired ? "Expired" : "Check acceptance"}
-                      </Button>
+                      </span>
                     </div>
                   </div>
                 );

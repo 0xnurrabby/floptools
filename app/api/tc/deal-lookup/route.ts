@@ -38,20 +38,14 @@ const HEX64 = /^0x[0-9a-f]{64}$/;
 // give the function room to fetch and scan it once.
 export const maxDuration = 60;
 
-export async function GET(req: NextRequest): Promise<NextResponse> {
-  const contract = req.nextUrl.searchParams.get("contract");
-  const offerId = req.nextUrl.searchParams.get("offerId");
-  const did = req.nextUrl.searchParams.get("did");
-  if (!contract && !offerId && !did) {
-    return NextResponse.json({ error: "pass ?contract=, ?offerId= or ?did= (did:key…)" }, { status: 400 });
-  }
-  if ((contract || offerId) && !HEX64.test(contract ?? offerId ?? "")) {
-    return NextResponse.json({ error: "id must be 0x + 64 lowercase hex" }, { status: 400 });
-  }
-  if (did && !isValidDid(did)) {
-    return NextResponse.json({ error: "did must be a valid did:key" }, { status: 400 });
-  }
+// The venue's offers room is a busy ring; a plain tail read only covers a few
+// minutes of it. All lookup modes scan the full retained export, so cache the
+// body briefly (per instance) to keep refreshes cheap.
+let exportCache: { at: number; body: string } | null = null;
 
+async function fetchExportBody(): Promise<string> {
+  const now = Date.now();
+  if (exportCache && now - exportCache.at < 20_000) return exportCache.body;
   let res: Response;
   try {
     res = await fetch(`${BASE}/r/${OFFERS_ROOM}/export`, {
@@ -60,13 +54,40 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       headers: { Accept: "text/plain;q=0.9, application/json;q=0.5" },
     });
   } catch {
-    return NextResponse.json({ error: "could not reach the offers ring" }, { status: 502 });
+    throw new ExportError("could not reach the offers ring");
   }
   if (!res.ok) {
-    return NextResponse.json({ error: `upstream export failed (HTTP ${res.status})` }, { status: 502 });
+    throw new ExportError(`upstream export failed (HTTP ${res.status})`);
+  }
+  const body = await res.text();
+  exportCache = { at: now, body };
+  return body;
+}
+
+class ExportError extends Error {}
+
+export async function GET(req: NextRequest): Promise<NextResponse> {
+  const contract = req.nextUrl.searchParams.get("contract");
+  const offerId = req.nextUrl.searchParams.get("offerId");
+  const did = req.nextUrl.searchParams.get("did");
+  const offersParam = req.nextUrl.searchParams.get("offers");
+  if (!contract && !offerId && !did && offersParam !== "1") {
+    return NextResponse.json({ error: "pass ?contract=, ?offerId=, ?did= or ?offers=1" }, { status: 400 });
+  }
+  if ((contract || offerId) && !HEX64.test(contract ?? offerId ?? "")) {
+    return NextResponse.json({ error: "id must be 0x + 64 lowercase hex" }, { status: 400 });
+  }
+  if (did && !isValidDid(did)) {
+    return NextResponse.json({ error: "did must be a valid did:key" }, { status: 400 });
   }
 
-  const body = await res.text();
+  let body: string;
+  try {
+    body = await fetchExportBody();
+  } catch (e) {
+    return NextResponse.json({ error: e instanceof Error ? e.message : "could not read the offers ring" }, { status: 502 });
+  }
+
   const records: RecordInput[] = [];
   for (const line of body.split("\n")) {
     if (!line.trim()) continue;
@@ -84,6 +105,25 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     } catch {
       /* skip malformed line */
     }
+  }
+
+  if (offersParam === "1") {
+    const acceptRefs = new Set<string>();
+    for (const r of records) {
+      const f = decodeFrame(r.text);
+      if (f?.type === "accept") acceptRefs.add(f.ref);
+    }
+    const byId = new Map<string, { offer: OfferFrame; from: string; seq: number; ts: string }>();
+    for (const r of records) {
+      const f = decodeFrame(r.text);
+      if (!f || f.type !== "offer") continue;
+      const prev = byId.get(f.id);
+      if (!prev || r.seq > prev.seq) byId.set(f.id, { offer: f, from: r.from, seq: r.seq, ts: r.ts });
+    }
+    const out = [...byId.values()]
+      .map((x) => ({ ...x, accepted: acceptRefs.has(x.offer.id) }))
+      .sort((a, b) => (a.ts === b.ts ? b.seq - a.seq : a.ts < b.ts ? 1 : -1));
+    return NextResponse.json({ offers: out.slice(0, 100) });
   }
 
   if (contract) {
@@ -117,13 +157,21 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   }
 
   if (offerId) {
+    let foundOffer: OfferFrame | null = null;
+    for (const r of records) {
+      const f = decodeFrame(r.text);
+      if (f?.type === "offer" && f.id === offerId) {
+        foundOffer = f;
+        break;
+      }
+    }
     const acceptEntry = records
       .map((r) => ({ record: r, frame: decodeFrame(r.text) }))
       .find((x): x is { record: RecordInput; frame: AcceptFrame } => x.frame?.type === "accept" && x.frame.ref === offerId);
     if (acceptEntry) {
-      return NextResponse.json({ found: true, accept: acceptEntry.frame, acceptRecord: acceptEntry.record });
+      return NextResponse.json({ found: true, offerPresent: true, accept: acceptEntry.frame, acceptRecord: acceptEntry.record });
     }
-    return NextResponse.json({ found: false });
+    return NextResponse.json({ found: false, offerPresent: foundOffer !== null, ...(foundOffer ? { offer: foundOffer } : {}) });
   }
 
   // ?did= — every deal this identity is a party to, straight off the board
