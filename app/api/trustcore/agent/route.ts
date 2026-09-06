@@ -47,6 +47,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       lockedAt: s.lockedAtMs ? new Date(s.lockedAtMs).toISOString() : null,
       revealedAt: s.revealedAtMs ? new Date(s.revealedAtMs).toISOString() : null,
       lastFrameAt: s.frames[s.frames.length - 1]?.ts ?? null,
+      hasReceipt: s.frames.some((f) => f.type === "receipt"),
       frames: s.frames.length,
     }));
 

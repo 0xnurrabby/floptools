@@ -86,6 +86,9 @@ export default function DealPage() {
   const [boardDeals, setBoardDeals] = useState<BoardDeal[] | null>(null);
   const [boardDealsError, setBoardDealsError] = useState<string | null>(null);
   const [boardBusy, setBoardBusy] = useState(false);
+  // per-contract lifecycle state from the Trustcore frame store (progress,
+  // terminal success/refund/cancel) — refreshed alongside the board list
+  const [dealStates, setDealStates] = useState<Record<string, { state: string; hasReceipt: boolean }>>({});
   // a coarse clock so expiry shows without Date.now() during render
   const [clock, setClock] = useState(0);
 
@@ -97,6 +100,26 @@ export default function DealPage() {
   const openOffers = offers.filter(
     (o) => !o.accepted && !(offersAt > 0 && offersAt > o.offer.expiresMs),
   );
+
+  const progressOf = (info: { state: string; hasReceipt: boolean } | undefined) => {
+    if (!info) return null;
+    switch (info.state) {
+      case "claimed":
+        return info.hasReceipt
+          ? { pct: 100, label: "Deal success", tone: "ok" as const, chip: "success" }
+          : { pct: 80, label: "claimed — publish the receipt", tone: "ok" as const, chip: "claimed" };
+      case "refunded":
+        return { pct: 100, label: "Deal refunded", tone: "warn" as const, chip: "refunded" };
+      case "cancelled":
+        return { pct: 100, label: "Deal cancelled", tone: "warn" as const, chip: "cancelled" };
+      case "locked":
+        return { pct: 60, label: "in progress — lock posted", tone: "empty" as const, chip: "locked" };
+      case "accepted":
+        return { pct: 40, label: "accepted — waiting for the lock", tone: "empty" as const, chip: "accepted" };
+      default:
+        return null;
+    }
+  };
 
   useEffect(() => {
     const t = setInterval(() => setClock(Date.now()), 30_000);
@@ -132,11 +155,36 @@ export default function DealPage() {
     });
   }, []);
 
+  const loadDealStates = useCallback((identity: string | null) => {
+    void Promise.resolve().then(() => {
+      if (!identity) {
+        setDealStates({});
+        return;
+      }
+      void fetch(`/api/trustcore/agent?did=${encodeURIComponent(identity)}`)
+        .then((res) => res.json() as Promise<{ deals?: { contractId: string; state: string; hasReceipt?: boolean }[] }>)
+        .then((data) => {
+          const map: Record<string, { state: string; hasReceipt: boolean }> = {};
+          for (const d of data.deals ?? []) {
+            map[d.contractId] = { state: d.state, hasReceipt: d.hasReceipt ?? false };
+          }
+          setDealStates(map);
+        })
+        .catch(() => {
+          /* board list still works without the state map */
+        });
+    });
+  }, []);
+
   useEffect(() => {
     loadBoardDeals(did);
-    const t = setInterval(() => loadBoardDeals(did, true), 30_000);
+    loadDealStates(did);
+    const t = setInterval(() => {
+      loadBoardDeals(did, true);
+      loadDealStates(did);
+    }, 30_000);
     return () => clearInterval(t);
-  }, [did, loadBoardDeals]);
+  }, [did, loadBoardDeals, loadDealStates]);
 
   const loadOffers = useCallback((silent = false) => {
     if (!silent) {
@@ -656,7 +704,11 @@ export default function DealPage() {
               // is its own contract. Group by offer so "I posted once" never
               // looks like "I posted N times": one card per offer, contracts
               // under it with the accepting identity named.
-              const pending = boardList.filter((b) => !b.contract);
+              // Newest first: pending offers by offer time, accepted groups by
+              // their latest accept time, so the freshest activity sits on top.
+              const pending = boardList
+                .filter((b) => !b.contract)
+                .sort((a, b) => Date.parse(b.offerTs) - Date.parse(a.offerTs));
               const byOffer = new Map<string, BoardDeal[]>();
               for (const b of boardList) {
                 if (!b.contract) continue;
@@ -664,6 +716,11 @@ export default function DealPage() {
                 list.push(b);
                 byOffer.set(b.offer.id, list);
               }
+              const groups = [...byOffer.values()].sort((a, b) => {
+                const ta = Math.max(...a.map((x) => Date.parse(x.acceptTs ?? x.offerTs) || 0));
+                const tb = Math.max(...b.map((x) => Date.parse(x.acceptTs ?? x.offerTs) || 0));
+                return tb - ta;
+              });
               return (
                 <>
                   {pending.map((b) => {
@@ -680,6 +737,17 @@ export default function DealPage() {
                             posted as {b.role} · open until <LocalTime value={b.offer.expiresMs} /> ·{" "}
                             {expired ? "the offer window is closed" : "click to check acceptance"}
                           </p>
+                          <div className="mt-1.5 flex items-center gap-2">
+                            <div className="h-1.5 w-24 overflow-hidden rounded-full bg-surface-soft">
+                              <div
+                                className={`h-full rounded-full ${expired ? "bg-amber-600" : "bg-brand-500"}`}
+                                style={{ width: expired ? "100%" : "20%" }}
+                              />
+                            </div>
+                            <span className={`caption-sm ${expired ? "text-amber-600" : "text-body"}`}>
+                              {expired ? "expired — no one accepted" : "waiting for acceptance"}
+                            </span>
+                          </div>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
                           {expired ? <StatusChip tone="warn">expired</StatusChip> : null}
@@ -690,7 +758,7 @@ export default function DealPage() {
                       </div>
                     );
                   })}
-                  {[...byOffer.values()].map((group) => {
+                  {groups.map((group) => {
                     const first = group[0];
                     const many = group.length > 1;
                     return (
@@ -729,8 +797,31 @@ export default function DealPage() {
                                     ? " · the secret is not in this browser"
                                     : ""}
                                 </p>
+                                {(() => {
+                                  const pr = progressOf(dealStates[b.contract ?? ""]);
+                                  if (!pr) return null;
+                                  return (
+                                    <div className="mt-1.5 flex items-center gap-2">
+                                      <div className="h-1.5 w-24 overflow-hidden rounded-full bg-surface-soft">
+                                        <div
+                                          className={`h-full rounded-full ${pr.tone === "ok" ? "bg-leaf-600" : pr.tone === "warn" ? "bg-amber-600" : "bg-brand-500"}`}
+                                          style={{ width: `${pr.pct}%` }}
+                                        />
+                                      </div>
+                                      <span className={`caption-sm ${pr.tone === "ok" ? "text-leaf-600" : pr.tone === "warn" ? "text-amber-600" : "text-body"}`}>
+                                        {pr.label}
+                                      </span>
+                                    </div>
+                                  );
+                                })()}
                               </div>
-                              <StatusChip tone="ok">{b.role}</StatusChip>
+                              <div className="flex shrink-0 items-center gap-2">
+                                <StatusChip tone="ok">{b.role}</StatusChip>
+                                {(() => {
+                                  const pr = progressOf(dealStates[b.contract ?? ""]);
+                                  return pr ? <StatusChip tone={pr.tone}>{pr.chip}</StatusChip> : null;
+                                })()}
+                              </div>
                             </Link>
                           ))}
                         </div>
