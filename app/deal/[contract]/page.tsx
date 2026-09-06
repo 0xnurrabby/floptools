@@ -29,6 +29,7 @@ import {
   type RecordInput,
 } from "@/lib/tclk-deal";
 import { findDeal, patchDeal, rememberPosted, type DealRecord } from "@/lib/deal-store";
+import { identityShortName } from "@/lib/identity";
 
 interface Board {
   records: RecordInput[];
@@ -327,6 +328,21 @@ export default function DealDetailPage() {
         </div>
       ) : null}
 
+      {did && offer && !isPayer && !isPayee ? (
+        <div className="mt-6">
+          <Note tone="warn">
+            <strong className="font-medium text-ink">This is not your deal yet.</strong>{" "}
+            You are signed in as <span className="font-mono">{identityShortName(did)}</span>, but this deal&apos;s
+            parties are <span className="font-mono">payer {shortDid(offer.from)}</span> and{" "}
+            {accept ? <span className="font-mono">payee {shortDid(accept.from)}</span> : "the accept is still incoming"}.
+            To act on it, unlock the identity that posted or accepted it: open{" "}
+            <Link className="font-medium text-ink underline underline-offset-2" href="/create">/create</Link>,
+            unlock the stored copy (or import the file), then come back here.
+          </Note>
+          <NextSteps />
+        </div>
+      ) : null}
+
       {board.error ? <div className="mt-4"><Note tone="error">{board.error}</Note></div> : null}
       {actionMsg ? (
         <div className="mt-4"><Note tone={actionMsg.ok ? "ok" : "error"}>{actionMsg.text}</Note></div>
@@ -538,6 +554,41 @@ function fmtMs(ms: number): string {
 
 function nowMs(): number {
   return Date.now();
+}
+
+function shortDid(did: string): string {
+  return `${did.slice(0, 12)}…${did.slice(-8)}`;
+}
+
+function NextSteps() {
+  const steps = [
+    { who: "Payer", text: "Write the paper rail record (one click).", tone: "bg-tint-brand text-brand-600" },
+    { who: "Payer", text: "Post the lock to the deal room.", tone: "bg-tint-brand text-brand-600" },
+    { who: "Payee", text: "Submits the work — a signed message in the deal room.", tone: "bg-tint-sky text-acc-sky" },
+    { who: "Payee", text: "Reveals the secret — that claims the deal.", tone: "bg-tint-sky text-acc-sky" },
+    { who: "Either", text: "Publishes the receipt. Done.", tone: "bg-tint-leaf text-leaf-600" },
+  ];
+  return (
+    <div className="mt-4 rounded-[16px] border border-hairline bg-surface-card p-4 sm:p-5">
+      <p className="heading-sm text-ink">What happens next</p>
+      <ol className="mt-3 space-y-2.5">
+        {steps.map((s, i) => (
+          <li key={i} className="flex items-start gap-3">
+            <span className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full font-mono text-[11px] font-semibold ${s.tone}`}>
+              {i + 1}
+            </span>
+            <div className="min-w-0">
+              <p className="body-sm-strong text-ink">{s.who}</p>
+              <p className="caption-sm text-body">{s.text}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+      <p className="caption-sm mt-3 text-body">
+        The paper rail is a rehearsal — it records the deal, it moves no money.
+      </p>
+    </div>
+  );
 }
 
 function fmtTs(ts: string): string {
