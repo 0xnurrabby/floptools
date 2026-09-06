@@ -180,6 +180,7 @@ export default function DealPage() {
 
   const postOffer = async () => {
     if (!did) return;
+    if (postBusy) return;
     setPostError(null);
     setPostOk(null);
     const now = nowMs();
@@ -315,6 +316,7 @@ export default function DealPage() {
 
   const acceptOffer = async (row: OfferRow) => {
     if (!did) return;
+    if (acceptBusy !== null) return;
     setAcceptBusy(row.offer.id);
     setAcceptError(null);
     try {
@@ -571,50 +573,92 @@ export default function DealPage() {
           </p>
         ) : (
           <div className="mt-3 space-y-2.5">
-            {boardList.map((b) => {
-              if (!b.contract) {
-                const expired = clock > 0 && clock >= b.offer.expiresMs;
-                return (
-                  <div
-                    key={b.offer.id}
-                    onClick={() => void checkBoardPending(b)}
-                    className="flex w-full cursor-pointer flex-wrap items-center justify-between gap-2 rounded-[16px] border border-dashed border-hairline bg-surface-card px-4 py-3 text-left transition-all hover:-translate-y-0.5 hover:border-brand-500/40 hover:shadow-soft"
-                  >
-                    <div className="min-w-0">
-                      <p className="body-sm-strong text-ink">Your offer · {shortContract(b.offer.id)}</p>
-                      <p className="caption-sm mt-0.5 text-mute">
-                        posted as {b.role} · open until {fmt(b.offer.expiresMs)} ·{" "}
-                        {expired ? "the offer window is closed" : "click to check acceptance"}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      {expired ? <StatusChip tone="warn">expired</StatusChip> : null}
-                      <span className="body-sm rounded-full border border-hairline bg-canvas px-4 py-2 text-ink">
-                        {expired ? "Expired" : "Check acceptance"}
-                      </span>
-                    </div>
-                  </div>
-                );
+            {(() => {
+              // One offer can be accepted by several identities — every accept
+              // is its own contract. Group by offer so "I posted once" never
+              // looks like "I posted N times": one card per offer, contracts
+              // under it with the accepting identity named.
+              const pending = boardList.filter((b) => !b.contract);
+              const byOffer = new Map<string, BoardDeal[]>();
+              for (const b of boardList) {
+                if (!b.contract) continue;
+                const list = byOffer.get(b.offer.id) ?? [];
+                list.push(b);
+                byOffer.set(b.offer.id, list);
               }
               return (
-                <Link
-                  key={b.contract}
-                  href={`/deal/${encodeURIComponent(b.contract)}`}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded-[16px] border border-dashed border-hairline bg-surface-card px-4 py-3 transition-all hover:-translate-y-0.5 hover:border-brand-500/40 hover:shadow-soft"
-                >
-                  <div className="min-w-0">
-                    <p className="body-sm-strong text-ink">{b.role === "payer" ? "Hiring" : "Working"} · {shortContract(b.contract)}</p>
-                    <p className="caption-sm mt-0.5 text-mute">
-                      {b.offer.job?.context ? b.offer.job.context.slice(0, 80) : "deal"} · from the board
-                      {b.role === "payee" && !deals.some((d) => d.contract === b.contract && !!d.preimage)
-                        ? " · the secret is not in this browser"
-                        : ""}
-                    </p>
-                  </div>
-                  <StatusChip tone="ok">{b.role}</StatusChip>
-                </Link>
+                <>
+                  {pending.map((b) => {
+                    const expired = clock > 0 && clock >= b.offer.expiresMs;
+                    return (
+                      <div
+                        key={b.offer.id}
+                        onClick={() => void checkBoardPending(b)}
+                        className="flex w-full cursor-pointer flex-wrap items-center justify-between gap-2 rounded-[16px] border border-dashed border-hairline bg-surface-card px-4 py-3 text-left transition-all hover:-translate-y-0.5 hover:border-brand-500/40 hover:shadow-soft"
+                      >
+                        <div className="min-w-0">
+                          <p className="body-sm-strong text-ink">Your offer · {shortContract(b.offer.id)}</p>
+                          <p className="caption-sm mt-0.5 text-mute">
+                            posted as {b.role} · open until {fmt(b.offer.expiresMs)} ·{" "}
+                            {expired ? "the offer window is closed" : "click to check acceptance"}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          {expired ? <StatusChip tone="warn">expired</StatusChip> : null}
+                          <span className="body-sm rounded-full border border-hairline bg-canvas px-4 py-2 text-ink">
+                            {expired ? "Expired" : "Check acceptance"}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {[...byOffer.values()].map((group) => {
+                    const first = group[0];
+                    const many = group.length > 1;
+                    return (
+                      <div key={first.offer.id} className="rounded-[16px] border border-hairline bg-surface-card p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="min-w-0">
+                            <p className="body-sm-strong text-ink">Your offer · {shortContract(first.offer.id)}</p>
+                            <p className="caption-sm mt-0.5 text-mute">
+                              {first.offer.job?.context ? first.offer.job.context.slice(0, 120) : "deal"} · accepted by{" "}
+                              {group.length} identit{group.length === 1 ? "y" : "ies"}
+                            </p>
+                          </div>
+                          <StatusChip tone="ok">{first.role}</StatusChip>
+                        </div>
+                        {many ? (
+                          <Note tone="warn" className="mt-3">
+                            {group.length} agents accepted this same offer — every accept is its own contract. Open the
+                            ones you do not want to proceed with and cancel them <strong className="font-medium text-ink">before any lock is posted</strong>.
+                          </Note>
+                        ) : null}
+                        <div className="mt-3 space-y-2">
+                          {group.map((b) => (
+                            <Link
+                              key={b.contract}
+                              href={`/deal/${encodeURIComponent(b.contract ?? "")}`}
+                              className="flex flex-wrap items-center justify-between gap-2 rounded-[12px] border border-dashed border-hairline bg-canvas px-4 py-2.5 transition-all hover:-translate-y-0.5 hover:border-brand-500/40 hover:shadow-soft"
+                            >
+                              <div className="min-w-0">
+                                <p className="body-sm-strong text-ink">{shortContract(b.contract ?? "")}</p>
+                                <p className="caption-sm mt-0.5 text-mute">
+                                  accepted by identity_{b.accept?.from.slice(-4)} · from the board
+                                  {b.role === "payee" && !deals.some((d) => d.contract === b.contract && !!d.preimage)
+                                    ? " · the secret is not in this browser"
+                                    : ""}
+                                </p>
+                              </div>
+                              <StatusChip tone="ok">{b.role}</StatusChip>
+                            </Link>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </>
               );
-            })}
+            })()}
           </div>
         )}
         {boardDealsError ? (
