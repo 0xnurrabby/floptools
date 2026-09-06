@@ -200,24 +200,39 @@ export async function contractId(offer: OfferFrame, accept: AcceptCore): Promise
   return domainHash("contract", canonicalJson({ offer, accept }));
 }
 
+export interface DealPairResult {
+  offer: OfferFrame;
+  offerRecord: RecordInput;
+  accept: AcceptFrame;
+  acceptRecord: RecordInput;
+  /** "ring" = found in tclk-offers; "mirror" = found in the deal room copy. */
+  source: "ring" | "mirror";
+}
+
 /**
  * Locate the ONE offer+accept pair whose recomputed contract id equals
  * `contract`. `tclk-offers` is a world-writable room that is busy and a
  * rolling ring (the venue retains only the newest ~10 MiB, and a plain read
  * returns only the tail), so a deal page must never trust "the first offer in
  * the tail" — it must match by the contract id itself, or fail honestly.
+ *
+ * When the ring has rotated the pair away, fall back to a signed mirror copy
+ * in the deal room (posted by the accepting identity at accept time). The
+ * recomputed contract id still binds the mirror to this contract, so a forged
+ * copy cannot pass.
  */
 export async function findDealPair(
   records: RecordInput[],
   contract: string,
-): Promise<{ offer: OfferFrame; offerRecord: RecordInput; accept: AcceptFrame; acceptRecord: RecordInput } | null> {
+): Promise<DealPairResult | null> {
   if (!CONTRACT_ID.test(contract)) return null;
+  const roomPrefix = `mb-p-tclk-${contract.slice(2, 18)}`;
   const offers: { record: RecordInput; frame: OfferFrame }[] = [];
   const acceptsByRef = new Map<string, { record: RecordInput; frame: AcceptFrame }[]>();
   for (const r of records) {
-    if (r.room !== OFFERS_ROOM) continue;
     const frame = decodeFrame(r.text);
     if (!frame) continue;
+    if (r.room !== OFFERS_ROOM) continue;
     if (frame.type === "offer") offers.push({ record: r, frame });
     else if (frame.type === "accept") {
       const list = acceptsByRef.get(frame.ref) ?? [];
@@ -225,6 +240,7 @@ export async function findDealPair(
       acceptsByRef.set(frame.ref, list);
     }
   }
+  // canonical first: the live ring
   for (const o of offers) {
     for (const a of acceptsByRef.get(o.frame.id) ?? []) {
       const computed = await contractId(o.frame, {
@@ -235,7 +251,35 @@ export async function findDealPair(
         nonce: a.frame.nonce,
       });
       if (computed.toLowerCase() === contract.toLowerCase()) {
-        return { offer: o.frame, offerRecord: o.record, accept: a.frame, acceptRecord: a.record };
+        return { offer: o.frame, offerRecord: o.record, accept: a.frame, acceptRecord: a.record, source: "ring" };
+      }
+    }
+  }
+  // then the deal-room mirror
+  const roomOffers: { record: RecordInput; frame: OfferFrame }[] = [];
+  const roomAccepts = new Map<string, { record: RecordInput; frame: AcceptFrame }[]>();
+  for (const r of records) {
+    if (!r.room.startsWith(roomPrefix)) continue;
+    const frame = decodeFrame(r.text);
+    if (!frame) continue;
+    if (frame.type === "offer") roomOffers.push({ record: r, frame });
+    else if (frame.type === "accept") {
+      const list = roomAccepts.get(frame.ref) ?? [];
+      list.push({ record: r, frame });
+      roomAccepts.set(frame.ref, list);
+    }
+  }
+  for (const o of roomOffers) {
+    for (const a of roomAccepts.get(o.frame.id) ?? []) {
+      const computed = await contractId(o.frame, {
+        from: a.frame.from,
+        ref: a.frame.ref,
+        statement: a.frame.statement,
+        paymentKey: a.frame.paymentKey,
+        nonce: a.frame.nonce,
+      });
+      if (computed.toLowerCase() === contract.toLowerCase()) {
+        return { offer: o.frame, offerRecord: o.record, accept: a.frame, acceptRecord: a.record, source: "mirror" };
       }
     }
   }
@@ -595,6 +639,8 @@ export interface FoldResult {
   workMessages: RecordInput[];
   state: DealState;
   stateReason: string | null;
+  /** Where the pair came from: the live offers ring, or the deal-room mirror. */
+  pairSource: "ring" | "mirror" | null;
   steps: StepStatus[];
 }
 
@@ -609,6 +655,7 @@ export async function foldContract(
   let offerRecord: RecordInput | null = null;
   let accept: AcceptFrame | null = null;
   let acceptRecord: RecordInput | null = null;
+  let pairSource: "ring" | "mirror" | null = null;
   let pairReason: string | null = null;
 
   if (opts.contract) {
@@ -621,6 +668,7 @@ export async function foldContract(
         offerRecord = pair.offerRecord;
         accept = pair.accept;
         acceptRecord = pair.acceptRecord;
+        pairSource = pair.source;
       } else {
         pairReason =
           "No offer+accept pair on the retained board hashes to this contract id. It may have scrolled out of the venue ring (only the newest ~10 MiB of tclk-offers is kept), or the id is not this deal's.";
@@ -775,6 +823,7 @@ export async function foldContract(
     workMessages,
     state,
     stateReason,
+    pairSource,
     steps,
   };
 }

@@ -24,6 +24,7 @@ import {
   decodePaperRecord,
   shortContract,
   type AcceptFrame,
+  type DealState,
   type FoldResult,
   type OfferFrame,
   type PaperRecord,
@@ -68,6 +69,30 @@ export default function DealDetailPage() {
   const pairRef = useRef<PairState>({ status: "loading" });
   const [pairState, setPairState] = useState<PairState>({ status: "loading" });
   const lastDealSeqRef = useRef(0);
+  const bestFoldRef = useRef<FoldResult | null>(null);
+  const mirrorPostedRef = useRef(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [regressed, setRegressed] = useState(false);
+
+  /**
+   * The venue keeps its rooms as rings and drops records aggressively; a
+   * later read can therefore be LESS complete than an earlier one. The fold is
+   * monotonic: once a state is verified on the board, the page never shows an
+   * earlier state again — it keeps the last confirmed fold and says so.
+   */
+  const foldScore = (f: FoldResult): number => {
+    const rank: Record<DealState, number> = {
+      proposed: 0,
+      accepted: 1,
+      locked: 2,
+      expired: 3,
+      cancelled: 4,
+      claimed: 5,
+      refunded: 5,
+    };
+    const done = f.steps.filter((s) => s.done).length;
+    return (rank[f.state] ?? 0) * 10 + done;
+  };
 
   const dealRoomName = dealRoom(contract);
   const validContract = dealRoomName !== null;
@@ -144,6 +169,11 @@ export default function DealDetailPage() {
       const maxSeq = Math.max(...dealRoomRead.messages.map((m) => m.seq));
       if (maxSeq > lastDealSeqRef.current) lastDealSeqRef.current = maxSeq;
     }
+    // The venue ring can drop old records and a reaped room restarts its seq —
+    // never let a since-cursor outrun the room, or the page stops seeing writes.
+    if (dealRoomRead && dealRoomRead.last_seq < lastDealSeqRef.current) {
+      lastDealSeqRef.current = 0;
+    }
     setBoard({
       records,
       paper: paperRaw ? decodePaperRecord(paperRaw) : null,
@@ -181,12 +211,63 @@ export default function DealDetailPage() {
     if (!validContract) return;
     let cancelled = false;
     void foldContract(board.records, board.paper, { contract, now: board.at > 0 ? board.at : undefined }).then((f) => {
-      if (!cancelled) setFold(f);
+      if (cancelled) return;
+      if (!bestFoldRef.current || foldScore(f) >= foldScore(bestFoldRef.current)) {
+        bestFoldRef.current = f;
+        setFold(f);
+        setRegressed(false);
+      } else {
+        setRegressed(true);
+      }
     });
     return () => {
       cancelled = true;
     };
   }, [board, contract, validContract]);
+
+  /**
+   * Mirror the offer+accept into the deal room once, so the pair survives the
+   * offers-ring rotation (the venue keeps only ~10 MiB there). Signed by the
+   * signed-in party; the recomputed contract id still binds it, so a forged
+   * copy cannot pass the fold.
+   */
+  useEffect(() => {
+    if (!did || !dealRoomName || mirrorPostedRef.current) return;
+    if (!fold?.offer || !fold?.accept) return;
+    if (fold.pairSource !== "ring") return;
+    if (!isPayer && !isPayee) return;
+    const hasMirror = board.records.some((r) => {
+      if (!r.room.startsWith(dealRoomName)) return false;
+      const t = decodeFrame(r.text)?.type;
+      return t === "offer" || t === "accept";
+    });
+    if (hasMirror) {
+      mirrorPostedRef.current = true;
+      return;
+    }
+    mirrorPostedRef.current = true;
+    const offer = fold.offer;
+    const accept = fold.accept;
+    void Promise.resolve()
+      .then(async () => {
+        for (const line of [encodeFrame(offer), encodeFrame(accept)]) {
+          const draft = signDraft(dealRoomName, line);
+          const res = await getClient().writeSigned({
+            room: dealRoomName,
+            did: draft.did,
+            sig: draft.sig,
+            nonce: draft.nonce,
+            text: draft.sweptText,
+          });
+          if (res.status < 200 || res.status >= 300) throw new Error(`mirror refused (HTTP ${res.status})`);
+        }
+        rememberPosted({ kind: "mirror", contract, at: nowMs(), detail: "offer+accept mirror in deal room" });
+        void readBoard();
+      })
+      .catch(() => {
+        /* non-fatal: the ring still has the pair */
+      });
+  }, [did, dealRoomName, fold, board, contract, isPayer, isPayee, readBoard]);
 
   const postTo = async (room: string, text: string) => {
     const draft = signDraft(room, text);
@@ -526,12 +607,15 @@ export default function DealDetailPage() {
         <Button
           variant="secondary"
           onClick={() => {
+            setRefreshing(true);
             loadPair();
-            void readBoard();
+            void readBoard()
+              .catch(() => {})
+              .finally(() => setRefreshing(false));
           }}
           className="shrink-0"
         >
-          {board.loaded ? "Refresh" : <Spinner label="Reading…" />}
+          {refreshing ? <Spinner label="…" /> : board.loaded ? "Refresh" : <Spinner label="Reading…" />}
         </Button>
       </div>
 
@@ -587,6 +671,27 @@ export default function DealDetailPage() {
             retained ring (tclk-offers keeps only the newest ~10 MiB) or was never published here. Everything shown on
             this page is read <strong className="font-medium text-ink">live from the public ledger</strong> (deal room +
             paper rail); nothing is taken from this browser&apos;s local storage.
+          </Note>
+        </div>
+      ) : null}
+
+      {fold?.pairSource === "mirror" ? (
+        <div className="mt-4">
+          <Note tone="info">
+            The offer+accept for this contract was verified from the{" "}
+            <strong className="font-medium text-ink">signed copy in the deal room</strong> — the originals have
+            scrolled out of the tclk-offers ring (the venue keeps only the newest ~10 MiB there).
+          </Note>
+        </div>
+      ) : null}
+
+      {regressed && fold ? (
+        <div className="mt-4">
+          <Note tone="info">
+            The venue&apos;s ring has dropped some of this deal&apos;s records since they were last verified on the
+            board (technocore keeps rooms as a ~10 MiB ring and reaps idle notes). The page keeps showing the{" "}
+            <strong className="font-medium text-ink">last state confirmed on the board</strong> — nothing you did was
+            lost. The ledger record above is what the venue still returns right now.
           </Note>
         </div>
       ) : null}

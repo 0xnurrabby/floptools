@@ -319,4 +319,35 @@ describe("tclk-deal conformance with @flop-labs/tclk", () => {
     const guard = mine.nextGuard(fold, null, { myDid: PAYER });
     expect(guard.action).toBe("write paper record");
   });
+
+  it("falls back to the deal-room mirror when the pair has left the offers ring", async () => {
+    const offer = await mine.makeOffer({ from: PAYER, role: "payer", ...BASE });
+    const preimage = `0x${"bc".repeat(32)}`;
+    const accept = await mine.makeAccept(offer, { from: PAYEE, statement: (await mine.hashLockFromPreimage(preimage)).hash });
+    const room = mine.dealRoom(accept.contract)!;
+    // ring rotated: only the mirror copy remains, in the deal room
+    const records: mine.RecordInput[] = [
+      { room, from: PAYER, text: mine.encodeFrame(offer), seq: 1, ts: t(0), sig: "s" },
+      { room, from: PAYEE, text: mine.encodeFrame(accept), seq: 2, ts: t(1), sig: "s" },
+    ];
+    const fold = await mine.foldContract(records, null, { contract: accept.contract, now: T0 });
+    expect(fold.pairSource).toBe("mirror");
+    expect(fold.state).toBe("accepted");
+    expect(fold.offer?.id).toBe(offer.id);
+    expect(fold.accept?.from).toBe(PAYEE);
+  });
+
+  it("rejects a forged mirror that does not hash to the contract id", async () => {
+    const offer = await mine.makeOffer({ from: PAYER, role: "payer", ...BASE });
+    const accept = await mine.makeAccept(offer, { from: PAYEE, statement: (await mine.hashLockFromPreimage(`0x${"cd".repeat(32)}`)).hash });
+    const room = mine.dealRoom(accept.contract)!;
+    const other = await mine.makeOffer({ from: didFromByte(9), role: "payer", ...BASE, amount: "999" });
+    const records: mine.RecordInput[] = [
+      { room, from: PAYER, text: mine.encodeFrame(other), seq: 1, ts: t(0), sig: "s" },
+      { room, from: PAYEE, text: mine.encodeFrame(accept), seq: 2, ts: t(1), sig: "s" },
+    ];
+    const fold = await mine.foldContract(records, null, { contract: accept.contract, now: T0 });
+    expect(fold.pairSource).toBeNull();
+    expect(fold.offer).toBeNull();
+  });
 });

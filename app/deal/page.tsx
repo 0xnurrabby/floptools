@@ -10,6 +10,7 @@ import { signDraft } from "@/lib/keyring";
 import { getClient } from "@/lib/client";
 import {
   OFFERS_ROOM,
+  dealRoom,
   encodeFrame,
   generateHashLock,
   makeAccept,
@@ -91,27 +92,29 @@ export default function DealPage() {
     return () => clearInterval(t);
   }, []);
 
-  const loadBoardDeals = useCallback((identity: string | null) => {
+  const loadBoardDeals = useCallback((identity: string | null, silent = false) => {
     void Promise.resolve().then(() => {
       if (!identity) {
         setBoardDeals(null);
         return;
       }
-      setBoardBusy(true);
-      setBoardDealsError(null);
+      if (!silent) {
+        setBoardBusy(true);
+        setBoardDealsError(null);
+      }
       setClock(Date.now());
       void fetch(`/api/tc/deal-lookup?did=${encodeURIComponent(identity)}`)
         .then((res) => res.json() as Promise<{ deals?: BoardDeal[]; error?: string }>)
         .then((data) => {
           if (!data.deals) {
-            setBoardDealsError(data.error ?? "Could not read your deals from the board.");
+            if (!silent) setBoardDealsError(data.error ?? "Could not read your deals from the board.");
             setBoardDeals([]);
           } else {
             setBoardDeals(data.deals);
           }
         })
         .catch((e: unknown) => {
-          setBoardDealsError((e as Error).message);
+          if (!silent) setBoardDealsError((e as Error).message);
           setBoardDeals([]);
         })
         .finally(() => setBoardBusy(false));
@@ -120,6 +123,8 @@ export default function DealPage() {
 
   useEffect(() => {
     loadBoardDeals(did);
+    const t = setInterval(() => loadBoardDeals(did, true), 30_000);
+    return () => clearInterval(t);
   }, [did, loadBoardDeals]);
 
   const loadOffers = useCallback((silent = false) => {
@@ -277,11 +282,35 @@ export default function DealPage() {
           createdAt: nowMs(),
         });
       }
+      void postPairMirror(deal.offer, data.accept).catch(() => {});
       loadBoardDeals(did);
       router.push(`/deal/${encodeURIComponent(data.accept.contract)}`);
     } catch (e) {
       setAcceptError((e as Error).message);
     }
+  };
+
+  /**
+   * Post a signed copy of the offer+accept into the deal room. The offers ring
+   * is a rolling ~10 MiB window, so the pair can scroll out while the deal is
+   * still in progress; the deal-room copy (bound by the recomputed contract
+   * id) keeps the pair verifiable. Non-fatal: the ring still holds it today.
+   */
+  const postPairMirror = async (offer: OfferFrame, accept: AcceptFrame) => {
+    const room = dealRoom(accept.contract);
+    if (!room) return;
+    for (const line of [encodeFrame(offer), encodeFrame(accept)]) {
+      const draft = signDraft(room, line);
+      const res = await getClient().writeSigned({
+        room,
+        did: draft.did,
+        sig: draft.sig,
+        nonce: draft.nonce,
+        text: draft.sweptText,
+      });
+      if (res.status < 200 || res.status >= 300) throw new Error(`mirror refused (HTTP ${res.status})`);
+    }
+    rememberPosted({ kind: "mirror", contract: accept.contract, at: nowMs(), detail: "offer+accept mirror in deal room" });
   };
 
   const acceptOffer = async (row: OfferRow) => {
@@ -315,6 +344,7 @@ export default function DealPage() {
         createdAt: nowMs(),
       });
       rememberPosted({ kind: "accept", contract: accept.contract, at: nowMs(), detail: "accept in tclk-offers" });
+      void postPairMirror(row.offer, accept).catch(() => {});
       loadBoardDeals(did);
       router.push(`/deal/${encodeURIComponent(accept.contract)}`);
     } catch (e) {
@@ -526,8 +556,15 @@ export default function DealPage() {
 
       {/* my deals — read straight off the public board */}
       <section className="mt-10">
-        <h2 className="heading-lg">Your deals</h2>
-        <p className="caption-sm mt-1 text-mute">Read live from the public board for this identity — nothing is stored in this browser.</p>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="min-w-0">
+            <h2 className="heading-lg">Your deals</h2>
+            <p className="caption-sm mt-1 text-mute">Read live from the public board for this identity — nothing is stored in this browser.</p>
+          </div>
+          <Button variant="secondary" onClick={() => loadBoardDeals(did)} disabled={boardBusy} className="shrink-0">
+            {boardBusy ? <Spinner label="…" /> : "Refresh"}
+          </Button>
+        </div>
         {boardList.length === 0 ? (
           <p className="caption-sm mt-3 text-mute">
             {boardBusy ? "Reading the board for your deals…" : "Nothing yet. Post an offer or accept one — it lands here."}

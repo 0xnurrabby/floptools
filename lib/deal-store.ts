@@ -31,7 +31,7 @@ export interface DealRecord {
 }
 
 export interface PostedFrame {
-  kind: "offer" | "accept" | "paper" | "lock" | "work" | "reveal" | "claim-paper" | "receipt" | "refund" | "cancel";
+  kind: "offer" | "accept" | "paper" | "lock" | "work" | "reveal" | "claim-paper" | "receipt" | "refund" | "cancel" | "mirror";
   contract: string;
   at: number;
   detail: string;
