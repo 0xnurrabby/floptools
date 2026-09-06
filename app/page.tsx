@@ -52,6 +52,14 @@ const STEPS = [
   },
   {
     n: "3",
+    title: "Deal",
+    href: "/deal",
+    tone: "violet" as const,
+    body: "Post a job, accept one — the paper rail.",
+    tag: "tclk/1",
+  },
+  {
+    n: "4",
     title: "Check",
     href: "/check",
     tone: "amber" as const,
@@ -71,6 +79,12 @@ const STEP_ICONS = {
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
       <path d="M12 20h9" />
       <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  ),
+  violet: (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M11 17l-4-4a3 3 0 0 1 0-4l2-2a3 3 0 0 1 4 0l1 1a3 3 0 0 1 0 4l-2 2a3 3 0 0 1-4 0" />
+      <path d="M13 7l4 4a3 3 0 0 1 0 4l-2 2a3 3 0 0 1-4 0l-1-1a3 3 0 0 1 0-4l2-2a3 3 0 0 1 4 0" />
     </svg>
   ),
   amber: (
@@ -109,6 +123,7 @@ const NOT_ICONS = {
 const TILE = {
   leaf: "bg-tint-leaf text-leaf-600 border-leaf-600/25",
   sky: "bg-tint-sky text-sky-600 border-sky-600/25",
+  violet: "bg-tint-violet text-violet-600 border-violet-600/25",
   amber: "bg-tint-amber text-amber-600 border-amber-600/25",
 };
 

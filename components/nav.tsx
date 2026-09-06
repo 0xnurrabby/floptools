@@ -9,6 +9,7 @@ const LINKS = [
   { href: "/create", label: "Create" },
   { href: "/sign", label: "Sign" },
   { href: "/activity", label: "Activity" },
+  { href: "/deal", label: "Deal" },
   { href: "/check", label: "Check" },
   { href: "/trustcore", label: "Trustcore" },
   { href: "/docs", label: "Docs" },

@@ -388,9 +388,11 @@ export function Spinner({ label = "Working…" }: { label?: string }) {
 
 export function Note({
   tone = "warn",
+  className = "",
   children,
 }: {
   tone?: "warn" | "ok" | "error" | "info";
+  className?: string;
   children: ReactNode;
 }) {
   const styles: Record<string, string> = {
@@ -401,7 +403,7 @@ export function Note({
   };
   return (
     <div
-      className={`rounded-[12px] border px-4 py-3 text-[14px] leading-relaxed ${styles[tone]}`}
+      className={`rounded-[12px] border px-4 py-3 text-[14px] leading-relaxed ${styles[tone]} ${className}`}
     >
       {children}
     </div>

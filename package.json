@@ -21,6 +21,7 @@
     "react-dom": "19.2.8"
   },
   "devDependencies": {
+    "@flop-labs/tclk": "^0.1.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^24",
     "@types/pg": "^8.23.1",
