@@ -71,6 +71,11 @@ export default function DealPage() {
   const [offersError, setOffersError] = useState<string | null>(null);
   const [acceptBusy, setAcceptBusy] = useState<string | null>(null);
   const [acceptError, setAcceptError] = useState<string | null>(null);
+  // search a did / identity suffix for its job posts
+  const [searchDid, setSearchDid] = useState("");
+  const [searchResults, setSearchResults] = useState<OfferRow[] | null>(null);
+  const [searchBusy, setSearchBusy] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   // this identity's deals found on the board (other browsers/devices too)
   const [boardDeals, setBoardDeals] = useState<BoardDeal[] | null>(null);
@@ -144,6 +149,29 @@ export default function DealPage() {
     const t = setInterval(() => loadOffers(true), 30_000);
     return () => clearInterval(t);
   }, [loadOffers]);
+
+  const runSearch = useCallback((query: string) => {
+    const q = query.trim();
+    if (!q) return;
+    setSearchBusy(true);
+    setSearchError(null);
+    setSearchResults(null);
+    fetch(`/api/tc/deal-lookup?offers=1&from=${encodeURIComponent(q)}`)
+      .then((res) => res.json() as Promise<{ offers?: OfferRow[]; error?: string; searchedFrom?: string }>)
+      .then((data) => {
+        if (!data.offers) {
+          setSearchError(data.error ?? "Search failed.");
+          setSearchResults([]);
+          return;
+        }
+        setSearchResults(data.offers);
+      })
+      .catch((e: unknown) => {
+        setSearchError((e as Error).message);
+        setSearchResults([]);
+      })
+      .finally(() => setSearchBusy(false));
+  }, []);
 
   const postOffer = async () => {
     if (!did) return;
@@ -296,6 +324,50 @@ export default function DealPage() {
     }
   };
 
+  const renderOfferRow = (row: OfferRow) => {
+    const mine = did === row.offer.from;
+    const expired = offersAt > 0 && offersAt > row.offer.expiresMs;
+    const paperOnly = row.offer.rails.includes("paper");
+    const canAccept = !mine && !expired && !row.accepted && paperOnly;
+    return (
+      <div key={row.offer.id} className="rounded-[16px] border border-hairline bg-surface-card p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <p className="body-sm-strong text-ink">
+              {row.offer.job?.context ? row.offer.job.context : "No description — a bare offer."}
+            </p>
+            <div className="mt-1.5 flex flex-wrap items-center gap-2">
+              <code className="font-mono text-[12px] text-body">identity_{row.offer.from.slice(-4)}</code>
+              <StatusChip tone={expired ? "warn" : "ok"}>
+                {expired ? "expired" : "open"}
+              </StatusChip>
+              {row.accepted ? <StatusChip tone="empty">accepted</StatusChip> : null}
+              {!paperOnly ? <StatusChip tone="warn">non-paper rail</StatusChip> : null}
+              <span className="caption-sm text-mute">
+                {row.offer.amount} {row.offer.asset} · claim by {fmt(row.offer.claimByMs)}
+              </span>
+            </div>
+          </div>
+          <div className="flex w-full shrink-0 gap-2 sm:w-auto">
+            {canAccept ? (
+              <Button onClick={() => void acceptOffer(row)} disabled={acceptBusy !== null} className="flex-1 sm:flex-none">
+                {acceptBusy === row.offer.id ? <Spinner label="…" /> : "Accept"}
+              </Button>
+            ) : mine ? (
+              <span className="caption-sm text-body">your offer</span>
+            ) : expired ? (
+              <span className="caption-sm text-mute">past expiry</span>
+            ) : row.accepted ? (
+              <span className="caption-sm text-mute">already accepted</span>
+            ) : (
+              <span className="caption-sm text-mute">paper rail required</span>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="mx-auto max-w-4xl px-4 pb-10 pt-12">
       <p className="caption-sm text-mute">tclk/1 · paper rehearsal</p>
@@ -410,53 +482,44 @@ export default function DealPage() {
             </Button>
           </div>
           {offersError ? <div className="mt-4"><Note tone="error">{offersError}</Note></div> : null}
-          <div className="mt-4 space-y-3">
-            {offers.length === 0 && !offersBusy ? (
-              <p className="caption-sm text-mute">No open offers right now. Post one yourself, or check again.</p>
+          <div className="mt-4 flex flex-wrap items-end gap-2">
+            <div className="min-w-0 flex-1">
+              <Field label="Find a job by identity" hint="Paste a did:key (or its short suffix, e.g. Vs4k / identity_Vs4k) to see every job that identity posted.">
+                <TextInput
+                  value={searchDid}
+                  onChange={(e) => setSearchDid(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") runSearch(searchDid);
+                  }}
+                  placeholder="did:key:z6Mk… or identity_Vs4k"
+                />
+              </Field>
+            </div>
+            <Button onClick={() => runSearch(searchDid)} disabled={searchBusy || !searchDid.trim()} className="shrink-0">
+              {searchBusy ? <Spinner label="…" /> : "Search"}
+            </Button>
+            {searchResults !== null ? (
+              <Button variant="secondary" onClick={() => setSearchResults(null)} className="shrink-0">
+                Show all offers
+              </Button>
             ) : null}
-            {offers.map((row) => {
-              const mine = did === row.offer.from;
-              const expired = offersAt > 0 && offersAt > row.offer.expiresMs;
-              const paperOnly = row.offer.rails.includes("paper");
-              const canAccept = !mine && !expired && !row.accepted && paperOnly;
-              return (
-                <div key={row.offer.id} className="rounded-[16px] border border-hairline bg-surface-card p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <p className="body-sm-strong text-ink">
-                        {row.offer.job?.context ? row.offer.job.context : "No description — a bare offer."}
-                      </p>
-                      <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                        <code className="font-mono text-[12px] text-body">identity_{row.offer.from.slice(-4)}</code>
-                        <StatusChip tone={expired ? "warn" : "ok"}>
-                          {expired ? "expired" : "open"}
-                        </StatusChip>
-                        {row.accepted ? <StatusChip tone="empty">accepted</StatusChip> : null}
-                        {!paperOnly ? <StatusChip tone="warn">non-paper rail</StatusChip> : null}
-                        <span className="caption-sm text-mute">
-                          {row.offer.amount} {row.offer.asset} · claim by {fmt(row.offer.claimByMs)}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="flex w-full shrink-0 gap-2 sm:w-auto">
-                      {canAccept ? (
-                        <Button onClick={() => void acceptOffer(row)} disabled={acceptBusy !== null} className="flex-1 sm:flex-none">
-                          {acceptBusy === row.offer.id ? <Spinner label="…" /> : "Accept"}
-                        </Button>
-                      ) : mine ? (
-                        <span className="caption-sm text-body">your offer</span>
-                      ) : expired ? (
-                        <span className="caption-sm text-mute">past expiry</span>
-                      ) : row.accepted ? (
-                        <span className="caption-sm text-mute">already accepted</span>
-                      ) : (
-                        <span className="caption-sm text-mute">paper rail required</span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+          </div>
+          {searchError ? <div className="mt-3"><Note tone="error">{searchError}</Note></div> : null}
+          <div className="mt-4 space-y-3">
+            {searchResults !== null ? (
+              <>
+                <p className="caption-sm text-mute">
+                  {searchResults.length === 0
+                    ? "No job posted by that identity in the retained ring (~last 2–3 hours)."
+                    : `${searchResults.length} job${searchResults.length === 1 ? "" : "s"} from that identity.`}
+                </p>
+                {searchResults.map(renderOfferRow)}
+              </>
+            ) : offers.length === 0 && !offersBusy ? (
+              <p className="caption-sm text-mute">No open offers right now. Post one yourself, or check again.</p>
+            ) : (
+              offers.map(renderOfferRow)
+            )}
           </div>
         </Card>
       )}

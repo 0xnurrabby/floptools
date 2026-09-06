@@ -108,6 +108,23 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   }
 
   if (offersParam === "1") {
+    const fromParam = req.nextUrl.searchParams.get("from")?.trim() ?? "";
+    let matchFrom: ((from: string) => boolean) | null = null;
+    if (fromParam) {
+      if (/^did:key:/i.test(fromParam)) {
+        if (!isValidDid(fromParam)) {
+          return NextResponse.json({ error: "from must be a valid did:key" }, { status: 400 });
+        }
+        matchFrom = (f) => f === fromParam;
+      } else {
+        const stripped = fromParam.replace(/^identity_/i, "");
+        if (!/^[0-9A-Za-z]{3,8}$/.test(stripped)) {
+          return NextResponse.json({ error: "from must be a did:key or a short identity suffix (3–8 chars)" }, { status: 400 });
+        }
+        const suffix = stripped.toLowerCase();
+        matchFrom = (f) => f.toLowerCase().endsWith(suffix);
+      }
+    }
     const acceptRefs = new Set<string>();
     for (const r of records) {
       const f = decodeFrame(r.text);
@@ -120,10 +137,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       const prev = byId.get(f.id);
       if (!prev || r.seq > prev.seq) byId.set(f.id, { offer: f, from: r.from, seq: r.seq, ts: r.ts });
     }
-    const out = [...byId.values()]
+    let out = [...byId.values()]
       .map((x) => ({ ...x, accepted: acceptRefs.has(x.offer.id) }))
       .sort((a, b) => (a.ts === b.ts ? b.seq - a.seq : a.ts < b.ts ? 1 : -1));
-    return NextResponse.json({ offers: out.slice(0, 100) });
+    if (matchFrom) out = out.filter((x) => matchFrom(x.offer.from));
+    return NextResponse.json({ offers: out.slice(0, 100), ...(matchFrom ? { searchedFrom: fromParam } : {}) });
   }
 
   if (contract) {
