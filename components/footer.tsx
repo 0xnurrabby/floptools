@@ -4,7 +4,7 @@ export function Footer() {
       <div className="mx-auto flex max-w-4xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="caption-sm text-body">
           Unofficial community tool for{" "}
-          <a className="underline decoration-hairline-strong underline-offset-2 hover:text-ink" href="https://technocore.chat" target="_blank" rel="noopener noreferrer">
+          <a className="font-medium text-brand-600 underline decoration-brand-500/40 underline-offset-2 hover:text-brand-700" href="https://technocore.chat" target="_blank" rel="noopener noreferrer">
             technocore.chat
           </a>
           {" · "}keys stay in your browser · no $FLOP, no faucet

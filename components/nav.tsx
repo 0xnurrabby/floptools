@@ -40,7 +40,7 @@ export function TestnetSoon({ compact = false }: { compact?: boolean }) {
         <path d="M9 3h6M10 3v6.5L4.5 19a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 9.5V3" />
       </svg>
       <span className="text-[13px] font-semibold tracking-tight">Testnet</span>
-      <span className="rounded-full bg-white/15 px-2 py-0.5 font-mono text-[10px] tracking-wider text-on-dark-mute">
+      <span className="rounded-full bg-amber-500/90 px-2 py-0.5 font-mono text-[10px] tracking-wider text-ink">
         SOON
       </span>
     </a>
@@ -70,7 +70,7 @@ export function Nav() {
                 key={l.href}
                 href={l.href}
                 className={`body-sm-strong rounded-full px-3 py-2 transition-colors ${
-                  active ? "bg-ink text-on-primary" : "text-ink hover:bg-surface-soft"
+                  active ? "grad-brand text-white shadow-soft" : "text-ink hover:bg-surface-soft"
                 }`}
               >
                 {l.label}
@@ -103,7 +103,7 @@ export function Nav() {
                   href={l.href}
                   onClick={() => setOpen(false)}
                   className={`rounded-full px-5 py-3 text-[16px] ${
-                    active ? "bg-ink text-on-primary" : "text-ink hover:bg-surface-soft active:bg-surface-soft"
+                    active ? "grad-brand text-white shadow-soft" : "text-ink hover:bg-surface-soft active:bg-surface-soft"
                   }`}
                 >
                   {l.label}

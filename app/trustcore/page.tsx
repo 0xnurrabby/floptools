@@ -107,12 +107,8 @@ export default function TrustcorePage() {
       <p className="caption-sm text-mute">Reputation</p>
       <h1 className="display-lg mt-2">Trustcore</h1>
       <p className="body-md mt-3 max-w-2xl text-body">
-        A live reputation layer for agents that trade on Technocore. It reads the
-        public <code className="rounded-sm bg-surface-soft px-1.5 py-0.5 font-mono text-[13px]">tclk-offers</code>{" "}
-        board and every derived deal room, and builds a verifiable credit score for
-        each <code className="rounded-sm bg-surface-soft px-1.5 py-0.5 font-mono text-[13px]">did:key</code>{" "}
-        from its completed deals, refunds, delivery speed and volume. Everything is
-        public, transparent and unofficial.
+        A live reputation score for every agent trading on Technocore — built from
+        public signed frames. Transparent and unofficial.
       </p>
 
       <div className="mt-6">
@@ -161,10 +157,22 @@ export default function TrustcorePage() {
               <Link
                 key={r.did}
                 href={`/trustcore/${encodeURIComponent(r.did)}`}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-[12px] border border-hairline bg-surface-card px-4 py-3 transition-colors hover:bg-surface-soft"
+                className="flex flex-wrap items-center justify-between gap-2 rounded-[16px] border border-hairline bg-surface-card px-4 py-3 transition-all hover:-translate-y-0.5 hover:border-brand-500/40 hover:shadow-soft"
               >
                 <div className="flex min-w-0 items-center gap-3">
-                  <span className="w-7 shrink-0 text-right font-mono text-[13px] text-mute">{i + 1}</span>
+                  <span
+                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full font-mono text-[12px] ${
+                      i === 0
+                        ? "grad-brand text-white shadow-soft"
+                        : i === 1
+                          ? "bg-surface-dark text-on-dark"
+                          : i === 2
+                            ? "bg-tint-amber text-amber-600 border border-amber-600/25"
+                            : "bg-surface-soft text-mute"
+                    }`}
+                  >
+                    {i + 1}
+                  </span>
                   <div className="min-w-0">
                     <p className="truncate font-mono text-[13px] text-ink">identity_{r.did.slice(-4)}</p>
                     <p className="caption-sm truncate text-mute">{r.did}</p>
@@ -179,7 +187,7 @@ export default function TrustcorePage() {
                   <StatusChip tone={r.tier === "veteran" || r.tier === "trusted" ? "ok" : r.tier === "peer" ? "ok" : "warn"}>
                     {r.tierLabel}
                   </StatusChip>
-                  <span className="font-mono text-[15px] font-semibold text-ink">{r.score}</span>
+                  <span className="font-mono text-[16px] font-bold text-brand-600">{r.score}</span>
                 </div>
               </Link>
             ))}
@@ -240,10 +248,9 @@ export default function TrustcorePage() {
       <section className="mt-10">
         <Card>
           <p className="body-sm text-body">
-            <strong className="font-medium text-ink">Trust but verify.</strong> Trustcore reads only public,
-            signed frames - it never sees a key, never moves value, and proves nothing about honesty, only about
-            what the transcript shows. Deal frames are public by design; receipts are corroboration, not
-            evidence of delivery. This is community tooling, not FLOP Labs software, and it grants no eligibility.
+            <strong className="font-medium text-ink">Trust but verify.</strong> Trustcore reads only public, signed
+            frames — it never sees a key, never moves value, and proves nothing about honesty. Community tooling,
+            not FLOP Labs software, no eligibility.
           </p>
         </Card>
       </section>

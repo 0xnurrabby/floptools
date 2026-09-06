@@ -152,10 +152,10 @@ export default function CheckPage() {
   return (
     <div className="mx-auto max-w-4xl px-4 pb-10 pt-12">
       <p className="caption-sm text-mute">Verification</p>
-      <h1 className="display-lg mt-2">Check any did:key</h1>
+      <h1 className="display-lg mt-2">Check any <span className="text-grad">did:key</span></h1>
       <p className="body-md mt-3 max-w-xl text-body">
-        Paste a <code className="rounded-sm bg-surface-soft px-1.5 py-0.5 font-mono text-[13px]">did:key:z6Mk…</code>: all
-        reads are public. Unlock your own identity below to auto-check it.
+        Paste a <code className="rounded-sm bg-tint-brand px-1.5 py-0.5 font-mono text-[13px] text-brand-700">did:key:z6Mk…</code>.
+        All reads are public.
       </p>
 
       <div className="mt-6">
@@ -218,8 +218,7 @@ export default function CheckPage() {
             <div>
               <h2 className="heading-md">Ledger acceptances</h2>
               <p className="caption-sm mt-1 text-body">
-                Each item was accepted by the public ledger at publish time (status 200, server-assigned seq)
-                and its signature still verifies offline — the acceptance is permanent even after busy rooms roll on.
+                Accepted at publish time (status 200 + server seq). The signature still verifies — permanent even after busy rooms roll on.
               </p>
               <div className="mt-3 space-y-3">
                 {result.localActivity.map((a) => (
@@ -241,9 +240,7 @@ export default function CheckPage() {
           <div>
             <h2 className="heading-md">Signed activity by room</h2>
             <p className="caption-sm mt-1 text-body">
-              Confirmed = accepted by the ledger at publish time (server seq assigned, signature re-verifiable).
-              On ledger = the message is also inside the currently readable public tail (busy rooms roll quickly,
-              but the acceptance and the signature never expire).
+              Confirmed = accepted at publish time. On ledger = still inside the readable tail (busy rooms roll quickly, but acceptances never expire).
             </p>
             <div className="mt-3 space-y-3">
               {result.activity.length === 0 ? (
@@ -285,16 +282,15 @@ export default function CheckPage() {
             </div>
             <p className="caption-sm mt-3 text-body">
               {result.localCount > 0
-                ? "Every message was accepted by the ledger at publish time (HTTP 200, server-assigned seq) and the signature still verifies. The readable tail only shows the newest ~200 messages, so a busy room moves them out of the scan window — the acceptance itself never expires."
-                : "No signed message from this key is currently in the readable tail. If you signed recently, use the receipt's seq below; otherwise the public room record has rolled past."}
+                ? "Every message was accepted by the ledger at publish time (HTTP 200, server seq) and the signature still verifies. The readable tail only shows the newest ~200 messages — the acceptance never expires."
+                : "No signed message from this key is currently in the readable tail. If you signed recently, check the receipt's seq below."}
             </p>
           </div>
 
           <div>
             <h2 className="heading-md">Public record — what this DID did, when</h2>
             <p className="caption-sm mt-1 text-body">
-              Every item is a real public event, timestamped. Green = confirmed on the ledger (server
-              seq + verified signature) or a public tclk/1 deal frame; the newest items come first.
+              Real public events, timestamped. Newest first.
             </p>
             <div className="mt-3 space-y-2">
               {buildTimeline(result, tcResult).map((row, i) => (
@@ -390,12 +386,23 @@ export default function CheckPage() {
 
 function CheckItem({ label, ok, hint }: { label: string; ok: boolean; hint: string }) {
   return (
-    <div className="rounded-[12px] border border-hairline bg-surface-soft p-4">
-      <div className="flex items-center justify-between gap-2">
-        <span className="body-sm-strong text-ink">{label}</span>
-        <span className={`font-mono text-[13px] ${ok ? "text-ink" : "text-mute"}`}>{ok ? "yes" : "no"}</span>
+    <div className={`flex gap-3 rounded-[16px] border p-4 ${ok ? "border-leaf-600/25 bg-tint-leaf" : "border-hairline bg-surface-card"}`}>
+      <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] shadow-soft ${ok ? "bg-leaf-600 text-white" : "bg-surface-soft text-mute"}`}>
+        {ok ? (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M20 6 9 17l-5-5" />
+          </svg>
+        ) : (
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <circle cx="12" cy="12" r="9" />
+            <path d="M8 8l8 8M16 8l-8 8" />
+          </svg>
+        )}
+      </span>
+      <div className="min-w-0">
+        <p className="body-sm-strong text-ink">{label}</p>
+        <p className="caption-sm mt-0.5 break-all text-body">{hint}</p>
       </div>
-      <p className="caption-sm mt-1 break-all text-body">{hint}</p>
     </div>
   );
 }

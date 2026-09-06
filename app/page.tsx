@@ -2,10 +2,26 @@ import Link from "next/link";
 import { LinkButton } from "@/components/ui";
 
 const NOTS = [
-  ["Not an airdrop claimer", "Posting here creates no eligibility by itself."],
-  ["Not official software", "Community-made. Only @flop_labs / flop.finance are official."],
-  ["Not a wallet", "A did:key is not a wallet key. Never paste a seed anywhere."],
-  ["No faucet, no token", "The faucet is closed and $FLOP is not live."],
+  {
+    title: "Not an airdrop claimer",
+    body: "Posting alone creates no eligibility.",
+    icon: "airdrop",
+  },
+  {
+    title: "Not official software",
+    body: "Community-made. Only @flop_labs is official.",
+    icon: "shield",
+  },
+  {
+    title: "Not a wallet",
+    body: "A did:key is not a wallet key.",
+    icon: "wallet",
+  },
+  {
+    title: "No faucet, no token",
+    body: "The faucet is closed, $FLOP not live.",
+    icon: "x",
+  },
 ] as const;
 
 const LINKS = [
@@ -22,95 +38,136 @@ const STEPS = [
     n: "1",
     title: "Create",
     href: "/create",
-    tint: "border-acc-leaf/30 bg-tint-leaf",
-    num: "bg-acc-leaf text-white",
-    arrow: "text-acc-leaf",
-    lines: [
-      "Create DID",
-      "or import DID",
-    ],
-    body: "Your identity is one Ed25519 keypair, made in this tab in seconds. Already have one (identity.pem, any backup)? Import it — same result.",
+    tone: "leaf" as const,
+    body: "One keypair, made in this tab.",
+    tag: "2 min",
   },
   {
     n: "2",
     title: "Activity",
     href: "/activity",
-    tint: "border-acc-sky/30 bg-tint-sky",
-    num: "bg-acc-sky text-white",
-    arrow: "text-acc-sky",
-    lines: ["Templates", "→ Scroll / pick one", "→ Sign & publish", "DID note too"],
-    body: "Pick a check-in template, sign & publish it, then publish your DID note. That is what keeps your identity visible on the network.",
+    tone: "sky" as const,
+    body: "Sign check-ins, publish your DID note.",
+    tag: "1–3 days",
   },
   {
     n: "3",
     title: "Check",
     href: "/check",
-    tint: "border-acc-amber/30 bg-tint-amber",
-    num: "bg-acc-amber text-white",
-    arrow: "text-acc-amber",
-    lines: ["Check your DID", "for setup status"],
-    body: "Paste your did:key. See green or red: note on ledger? key ever signed? If something is red, the card tells you exactly what to fix.",
+    tone: "amber" as const,
+    body: "See green or red on the ledger.",
+    tag: "anytime",
   },
-] as const;
+];
+
+const STEP_ICONS = {
+  leaf: (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M21 8a9 9 0 1 0-9 9c-3 1-5 1-8 1 3 3 8 4 13 2 3-1.5 4.5-5 4-9.5" />
+      <path d="M21 8c-2 4-6 6-10 6" />
+    </svg>
+  ),
+  sky: (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+    </svg>
+  ),
+  amber: (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="12" cy="12" r="9" />
+      <path d="m9 12 2 2 4-4" />
+    </svg>
+  ),
+};
+
+const NOT_ICONS = {
+  airdrop: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M12 7v5l3 2" />
+    </svg>
+  ),
+  shield: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6Z" />
+    </svg>
+  ),
+  wallet: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M3 7a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+      <path d="M16 12h5" />
+    </svg>
+  ),
+  x: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M6 6l12 12M18 6L6 18" />
+    </svg>
+  ),
+};
+
+const TILE = {
+  leaf: "bg-tint-leaf text-leaf-600 border-leaf-600/25",
+  sky: "bg-tint-sky text-sky-600 border-sky-600/25",
+  amber: "bg-tint-amber text-amber-600 border-amber-600/25",
+};
 
 export default function Home() {
   return (
     <div className="mx-auto max-w-4xl px-4">
       {/* Hero */}
-      <section className="flex flex-col items-center pt-20 pb-14 text-center">
-        <h1 className="display-xl max-w-xl">
-          One DID. Kept alive.
+      <section className="relative overflow-hidden pt-16 pb-12 text-center sm:pt-20">
+        <div className="hero-glow left-1/2 top-[-120px] h-72 w-[560px] -translate-x-1/2 bg-brand-500/25" aria-hidden />
+        <div className="hero-glow left-[-80px] top-24 h-56 w-56 bg-rose-500/15" aria-hidden />
+        <div className="hero-glow right-[-60px] top-32 h-52 w-52 bg-violet-600/15" aria-hidden />
+        <h1 className="display-xl relative max-w-xl">
+          One DID. <span className="text-grad">Kept alive.</span>
         </h1>
-        <p className="body-md mt-4 max-w-lg text-body">
-          Create one encrypted did:key in this tab, sign messages to
-          Technocore, stay active until the Flop testnet.
+        <p className="body-md relative mt-4 max-w-lg text-body">
+          Create an encrypted did:key in this tab, sign on Technocore,
+          stay active until the Flop testnet.
         </p>
 
-        <div className="mt-7 flex w-full flex-col items-center gap-3 sm:w-auto sm:flex-row">
+        <div className="relative mt-7 flex w-full flex-col items-center gap-3 sm:w-auto sm:flex-row">
           <LinkButton href="/create" variant="primary" className="w-full sm:w-auto">
             Create your DID
           </LinkButton>
           <LinkButton href="/docs" className="w-full sm:w-auto">How it works</LinkButton>
         </div>
 
-        <p className="caption-sm mt-5 text-mute">
+        <p className="caption-sm relative mt-5 text-mute">
           Unofficial · not affiliated · keys never leave your device
         </p>
       </section>
 
       {/* The 1-2-3 keep-alive flow */}
-      <section aria-label="Keep your identity alive" className="mt-4">
-        <div className="rounded-[12px] border border-acc-leaf/30 bg-tint-leaf px-5 py-4 text-center">
-          <p className="heading-sm text-ink">
-            Just do these <span className="font-semibold text-acc-leaf">3 steps</span> every{" "}
-            <span className="font-semibold text-acc-leaf">1–3 days</span> to stay active
-            before testnet and airdrop tasks.
-          </p>
-        </div>
-
-        <div className="mt-5 flex flex-col items-stretch gap-3 lg:flex-row lg:items-center">
+      <section aria-label="Keep your identity alive" className="mt-2">
+        <div className="flex flex-col items-stretch gap-3 lg:flex-row">
           {STEPS.map((s, i) => (
             <span key={s.n} className="contents">
               <Link
                 href={s.href}
-                className={`flex flex-1 flex-col rounded-[12px] border p-5 transition-transform hover:-translate-y-0.5 ${s.tint}`}
+                className={`group flex flex-1 flex-col rounded-[16px] border p-5 transition-all hover:-translate-y-1 hover:shadow-soft ${TILE[s.tone]}`}
               >
-                <span className={`flex h-7 w-7 items-center justify-center rounded-full font-mono text-[13px] ${s.num}`}>
-                  {s.n}
+                <span className="flex items-center justify-between">
+                  <span className="flex h-11 w-11 items-center justify-center rounded-[14px] bg-white/70 shadow-soft">
+                    {STEP_ICONS[s.tone]}
+                  </span>
+                  <span className="rounded-full border border-ink/10 bg-white/60 px-2.5 py-0.5 font-mono text-[11px] opacity-70">
+                    {s.tag}
+                  </span>
                 </span>
-                <h3 className="heading-sm mt-3 text-ink">{s.title}</h3>
-                <div className="mt-2 space-y-0.5 font-mono text-[13px] text-ink">
-                  {s.lines.map((l) => (
-                    <p key={l}>{l}</p>
-                  ))}
-                </div>
-                <p className="caption-sm mt-3 text-charcoal">{s.body}</p>
+                <h3 className="heading-sm mt-4 text-ink">{s.title}</h3>
+                <p className="caption-sm mt-1 text-charcoal">{s.body}</p>
+                <span className="mt-3 inline-flex items-center gap-1 text-[13px] font-semibold text-ink opacity-60 transition-opacity group-hover:opacity-100">
+                  Open
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                    <path d="M5 12h14M13 6l6 6-6 6" />
+                  </svg>
+                </span>
               </Link>
               {i < STEPS.length - 1 ? (
-                <span
-                  className={`self-center px-1 font-mono text-2xl ${s.arrow} rotate-90 lg:rotate-0`}
-                  aria-hidden
-                >
+                <span className="self-center px-1 font-mono text-2xl text-brand-500/60" aria-hidden>
                   →
                 </span>
               ) : null}
@@ -119,15 +176,14 @@ export default function Home() {
         </div>
 
         <p className="mt-4 text-center caption-sm text-body">
-          No promises, no guarantees — the ask is simple: keep{" "}
-          <span className="font-mono font-medium text-ink">one</span> identity
-          consistent and honest. That is what a community remembers.
+          Keep <span className="font-mono font-medium text-ink">one</span> identity
+          consistent and honest — that is what a community remembers.
         </p>
       </section>
 
       {/* Terminal — the design's single "product preview" */}
       <section aria-label="The loop" className="mt-14">
-        <div className="overflow-hidden rounded-[12px] border border-hairline bg-canvas">
+        <div className="overflow-hidden rounded-[16px] border border-hairline bg-canvas">
           <div className="flex items-center gap-2 border-b border-hairline bg-surface-soft px-4 py-2.5">
             <span className="traffic-light traffic-red" aria-hidden />
             <span className="traffic-light traffic-yellow" aria-hidden />
@@ -141,7 +197,7 @@ export default function Home() {
             {"\n\n"}
             <span className="text-mute"># 2 publish</span>
             {"\n"}
-            sign <span className="text-ink">room|nonce|swept-text</span> → say-signed → seq
+            sign <span className="text-brand-600">room|nonce|swept-text</span> → say-signed → seq
             {"\n\n"}
             <span className="text-mute"># 3 stay active</span>
             {"\n"}
@@ -153,11 +209,14 @@ export default function Home() {
       {/* What it is not */}
       <section className="pt-14">
         <h2 className="heading-lg">What this is not</h2>
-        <div className="mt-4 grid gap-2 sm:grid-cols-4">
-          {NOTS.map(([title, body]) => (
-            <div key={title} className="rounded-[12px] border border-hairline bg-surface-soft p-4">
-              <p className="body-sm-strong text-ink">{title}</p>
-              <p className="caption-sm mt-1 text-body">{body}</p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {NOTS.map((n) => (
+            <div key={n.title} className="rounded-[16px] border border-hairline bg-surface-card p-4">
+              <span className="inline-flex h-9 w-9 items-center justify-center rounded-[12px] bg-surface-soft text-body">
+                {NOT_ICONS[n.icon]}
+              </span>
+              <p className="body-sm-strong mt-3 text-ink">{n.title}</p>
+              <p className="caption-sm mt-1 text-body">{n.body}</p>
             </div>
           ))}
         </div>
@@ -173,7 +232,7 @@ export default function Home() {
               href={href}
               target="_blank"
               rel="noopener noreferrer"
-              className="body-sm rounded-full border border-hairline bg-canvas px-4 py-2 text-ink transition-colors hover:bg-surface-soft"
+              className="body-sm rounded-full border border-hairline bg-canvas px-4 py-2 text-ink transition-colors hover:border-brand-500/40 hover:bg-tint-brand hover:text-brand-700"
             >
               {label}
             </a>
@@ -183,10 +242,10 @@ export default function Home() {
 
       {/* Dark strip — the single inverted moment */}
       <section className="pt-14">
-        <div className="flex flex-wrap items-center justify-between gap-4 rounded-[12px] bg-surface-dark px-6 py-6 text-on-dark">
+        <div className="grad-brand flex flex-wrap items-center justify-between gap-4 rounded-[16px] px-6 py-6 text-white shadow-soft">
           <div>
             <p className="heading-md">One identity. Forever.</p>
-            <p className="body-sm mt-1 text-on-dark-mute">
+            <p className="body-sm mt-1 text-white/80">
               Don&apos;t farm a dozen DIDs. Pick one key and keep it.
             </p>
           </div>

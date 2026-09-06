@@ -191,7 +191,9 @@ export default function CreatePage() {
   return (
     <div className="mx-auto max-w-4xl px-4 pb-10 pt-12">
       <p className="caption-sm text-mute">Step 1 of 3</p>
-      <h1 className="display-lg mt-2">Create your identity</h1>
+      <h1 className="display-lg mt-2">
+        Create your <span className="text-grad">identity</span>
+      </h1>
       <p className="body-md mt-3 max-w-xl text-body">
         One Ed25519 keypair, generated in this tab. No server ever sees the key.
       </p>
@@ -202,9 +204,17 @@ export default function CreatePage() {
       <div className="mt-8 grid gap-6 lg:grid-cols-2">
         {/* Create */}
         <Card>
-          <h2 className="heading-md">New keypair</h2>
+          <div className="flex items-center gap-3">
+            <span className="inline-flex h-11 w-11 items-center justify-center rounded-[14px] bg-tint-brand text-brand-600">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <circle cx="8" cy="15" r="4" />
+                <path d="M10.8 12.2 20 3M17 6l2 2M14 9l2 2" />
+              </svg>
+            </span>
+            <h2 className="heading-md">New keypair</h2>
+          </div>
           <div className="mt-4 space-y-4">
-            <Field label="Passphrase" hint={`≥ ${MIN_PASSPHRASE_LENGTH} chars. No recovery: this is the only way back.`}>
+            <Field label="Passphrase" hint={`≥ ${MIN_PASSPHRASE_LENGTH} chars. This is the only way back.`}>
               <TextInput
                 type="password"
                 value={pass}
@@ -227,18 +237,18 @@ export default function CreatePage() {
                 type="checkbox"
                 checked={keepInBrowser}
                 onChange={(e) => setKeepInBrowser(e.target.checked)}
-                className="h-4 w-4 rounded-sm accent-ink"
+                className="h-4 w-4 rounded-sm accent-brand-600"
               />
-              <span className="caption-sm text-mute">Keep encrypted copy here (encrypted file for backup)</span>
+              <span className="caption-sm text-charcoal">Keep encrypted copy here</span>
             </label>
             <label className="flex items-center gap-2 text-sm text-charcoal">
               <input
                 type="checkbox"
                 checked={keepUnlocked}
                 onChange={(e) => setKeepUnlocked(e.target.checked)}
-                className="h-4 w-4 rounded-sm accent-ink"
+                className="h-4 w-4 rounded-sm accent-brand-600"
               />
-              Stay unlocked on this device (no passphrase prompts until Lock)
+              <span className="caption-sm text-charcoal">Stay unlocked on this device</span>
             </label>
             <Button onClick={onCreate} disabled={busy !== null || !!did} className="w-full">
               {busy === "create" ? "Generating…" : did ? "Identity already unlocked" : "Generate & encrypt"}
@@ -251,25 +261,36 @@ export default function CreatePage() {
 
         {/* Master import */}
         <Card>
-          <h2 className="heading-md">Import from anywhere</h2>
-          <p className="caption-sm mt-1 text-body">
-            Bring in a did:key from any tool: floptools identity.json, encrypted
-            or plain PKCS8 PEM (e.g. identity.pem), community JSON backups
-            (cryptotelugu, technocore-work-passport, DID Studio), seed JSON, or
-            a raw seed. Sniffed from content, never the extension.
+          <div className="flex items-center gap-3">
+            <span className="inline-flex h-11 w-11 items-center justify-center rounded-[14px] bg-tint-violet text-violet-600">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M12 3v12M6 9l6 6 6-6" />
+                <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+              </svg>
+            </span>
+            <h2 className="heading-md">Import from anywhere</h2>
+          </div>
+          <p className="caption-sm mt-3 text-body">
+            Already have a key? Bring it in — any format:
           </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <span className="rounded-full border border-violet-600/25 bg-tint-violet px-3 py-1 font-mono text-[11px] text-violet-600">floptools JSON</span>
+            <span className="rounded-full border border-violet-600/25 bg-tint-violet px-3 py-1 font-mono text-[11px] text-violet-600">identity.pem</span>
+            <span className="rounded-full border border-violet-600/25 bg-tint-violet px-3 py-1 font-mono text-[11px] text-violet-600">seed JSON / raw</span>
+            <span className="rounded-full border border-violet-600/25 bg-tint-violet px-3 py-1 font-mono text-[11px] text-violet-600">community backups</span>
+          </div>
           <div className="mt-4 space-y-4">
             <div className="flex gap-2">
               <button
                 type="button"
-                className={`rounded-full px-4 py-2 text-sm font-medium ${importMode === "file" ? "bg-ink text-on-primary" : "bg-surface-soft text-ink hover:bg-hairline"}`}
+                className={`rounded-full px-4 py-2 text-sm font-medium ${importMode === "file" ? "grad-brand text-white shadow-soft" : "bg-surface-soft text-ink hover:bg-hairline"}`}
                 onClick={() => setImportMode("file")}
               >
                 File
               </button>
               <button
                 type="button"
-                className={`rounded-full px-4 py-2 text-sm font-medium ${importMode === "paste" ? "bg-ink text-on-primary" : "bg-surface-soft text-ink hover:bg-hairline"}`}
+                className={`rounded-full px-4 py-2 text-sm font-medium ${importMode === "paste" ? "grad-brand text-white shadow-soft" : "bg-surface-soft text-ink hover:bg-hairline"}`}
                 onClick={() => setImportMode("paste")}
               >
                 Paste
@@ -308,11 +329,11 @@ export default function CreatePage() {
             )}
 
             {importDetected ? (
-              <div className="rounded-[12px] border border-hairline bg-surface-soft px-3 py-2.5 text-[13px]">
-                <span className="font-medium text-ink">{importDetected.detail}</span>
-                <span className="text-body"> · detected</span>
+              <div className="rounded-[12px] border border-brand-500/25 bg-tint-brand px-3 py-2.5 text-[13px]">
+                <span className="font-medium text-brand-700">{importDetected.detail}</span>
+                <span className="text-brand-600/70"> · detected</span>
                 {importDetected.did ? (
-                  <span className="mt-1 block break-all font-mono text-[12px] text-charcoal">{importDetected.did}</span>
+                  <span className="mt-1 block break-all font-mono text-[12px] text-brand-700/80">{importDetected.did}</span>
                 ) : null}
               </div>
             ) : null}
@@ -357,7 +378,10 @@ export default function CreatePage() {
         <Card className="mt-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="min-w-0">
-              <p className="font-mono text-[15px] font-medium text-ink">{identityShortName(did)}</p>
+              <p className="flex items-center gap-2 font-mono text-[15px] font-medium text-ink">
+                <span className="pulse-dot h-2 w-2 rounded-full bg-leaf-600" aria-hidden />
+                {identityShortName(did)}
+              </p>
               <p className="caption-sm mt-0.5 text-mute">
                 Unlocked in this session{createdAt ? ` · created ${new Date(createdAt).toLocaleDateString()}` : ""}
               </p>
@@ -393,23 +417,49 @@ export default function CreatePage() {
         </div>
         <div>
           <h2 className="heading-md">Public / private</h2>
-          <div className="mt-3 space-y-2 text-[14px] leading-relaxed text-body">
-            <p>
-              <span className="font-medium text-ink">Public:</span> the DID. Share anywhere.
-            </p>
-            <p>
-              <span className="font-medium text-ink">Private:</span> identity file + passphrase. Never upload, never commit to git.
-            </p>
-            <p>
-              <span className="font-medium text-ink">Never:</span> paste a seed or wallet key into any room. A did:key is not a wallet.
-            </p>
+          <div className="mt-3 space-y-2">
+            <div className="flex items-start gap-3 rounded-[12px] border border-hairline bg-surface-card p-3.5">
+              <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] bg-tint-sky text-sky-600">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <circle cx="12" cy="12" r="9" />
+                  <path d="M3 12h18M12 3a15 15 0 0 1 0 18 15 15 0 0 1 0-18" />
+                </svg>
+              </span>
+              <div>
+                <p className="body-sm-strong text-ink">Public</p>
+                <p className="caption-sm text-body">The DID. Share it anywhere.</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3 rounded-[12px] border border-hairline bg-surface-card p-3.5">
+              <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] bg-tint-amber text-amber-600">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <rect x="4" y="10" width="16" height="11" rx="2" />
+                  <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+                </svg>
+              </span>
+              <div>
+                <p className="body-sm-strong text-ink">Private</p>
+                <p className="caption-sm text-body">File + passphrase. Never upload or commit.</p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3 rounded-[12px] border border-hairline bg-surface-card p-3.5">
+              <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] bg-tint-rose text-rose-600">
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M6 6l12 12M18 6L6 18" />
+                </svg>
+              </span>
+              <div>
+                <p className="body-sm-strong text-ink">Never</p>
+                <p className="caption-sm text-body">Paste a seed or wallet key. A did:key is not a wallet.</p>
+              </div>
+            </div>
           </div>
         </div>
       </div>
 
       <Note tone="info">
-        <strong className="font-medium text-ink">One identity forever.</strong> Next:{" "}
-        <Link className="text-ink underline underline-offset-2" href="/sign">sign a message →</Link>
+        <strong className="font-medium text-brand-700">One identity forever.</strong> Next:{" "}
+        <Link className="text-brand-700 underline underline-offset-2" href="/sign">sign a message →</Link>
       </Note>
 
       {limitMessage ? (

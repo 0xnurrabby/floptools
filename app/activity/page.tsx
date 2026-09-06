@@ -211,76 +211,85 @@ export default function ActivityPage() {
   return (
     <div className="mx-auto max-w-4xl px-4 pb-10 pt-12">
       <p className="caption-sm text-mute">Step 3 of 3</p>
-      <h1 className="display-lg mt-2">Stay active</h1>
+      <h1 className="display-lg mt-2">Stay <span className="text-grad">active</span></h1>
       <p className="body-md mt-3 max-w-xl text-body">
-        Keep the same key. Post signed, useful lines. Never &ldquo;checking in
-        for $FLOP&rdquo; spam, which gets filtered anyway.
+        Same key. Useful, signed lines. Never &ldquo;checking in for $FLOP&rdquo; spam.
       </p>
 
       {/* The ritual — do these in order, then repeat every 2–3 days */}
       <section className="mt-8">
-        <div className="rounded-[12px] border border-hairline bg-surface-card p-5">
+        <div className="rounded-[16px] border border-hairline bg-surface-card p-5">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="heading-sm text-ink">Your 1–3 day ritual</h2>
-            <span className="caption-sm text-mute">do it in order · repeat every 2–3 days</span>
+            <span className="caption-sm text-mute">in order · repeat every 2–3 days</span>
           </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-3">
             <RitualStep
               n="1"
+              icon="publish"
               tone="bg-acc-leaf text-white"
               tint="bg-tint-leaf border-acc-leaf/30"
               title="Publish DID note"
-              body="Once, right now. Makes your key visible and durable on the ledger."
+              body="Once, right now."
             />
             <RitualStep
               n="2"
+              icon="sign"
               tone="bg-acc-sky text-white"
               tint="bg-tint-sky border-acc-sky/30"
               title="Sign every check-in"
-              body="One tap each below — templates flip to Used after you sign."
+              body="One tap below each."
               href="#templates"
             />
             <RitualStep
               n="3"
+              icon="repeat"
               tone="bg-acc-amber text-white"
               tint="bg-tint-amber border-acc-amber/30"
               title="Repeat in 2–3 days"
-              body="Same key, steady presence. That is the whole ask."
+              body="Same key, steady presence."
             />
           </div>
         </div>
       </section>
 
-{/* DID note */}
+      {/* DID note */}
       <section className="mt-12">
         <h2 className="heading-lg">DID note & mailbox</h2>
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <div className="rounded-[12px] border border-acc-leaf/30 bg-tint-leaf p-4">
-            <p className="body-sm-strong text-ink">Publish DID note · do this once</p>
-            <p className="caption-sm mt-1 text-body">
-              Writes your public key to the durable store at{" "}
-              <code className="rounded-sm bg-surface-soft px-1 py-0.5 font-mono text-[12px]">/kv/did-&lt;shard&gt;/&lt;key&gt;</code>.
-              This is the &ldquo;this key is me&rdquo; record that /check and other
-              tools read. Do it right after creating your identity.
-            </p>
+          <div className="flex gap-3 rounded-[16px] border border-acc-leaf/30 bg-tint-leaf p-4">
+            <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-white/70 text-acc-leaf shadow-soft">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M4 12h13M12 6l6 6-6 6" />
+              </svg>
+            </span>
+            <div>
+              <p className="body-sm-strong text-ink">Publish DID note <span className="font-mono text-[11px] text-acc-leaf">· once</span></p>
+              <p className="caption-sm mt-1 text-body">
+                Writes your public key to{" "}
+                <code className="rounded-sm bg-white/60 px-1 py-0.5 font-mono text-[12px]">/kv/did-&lt;shard&gt;/&lt;key&gt;</code>{" "}
+                — the &ldquo;this key is me&rdquo; record /check reads.
+              </p>
+            </div>
           </div>
-          <div className="rounded-[12px] border border-acc-sky/30 bg-tint-sky p-4">
-            <p className="body-sm-strong text-ink">Mint mailbox name · optional</p>
-            <p className="caption-sm mt-1 text-body">
-              Creates an unguessable private address (mb-p-…) where others can
-              DM you directly, signed-only. You do not need it for onboarding;
-              skip it and add it later only if someone should message you.
-            </p>
+          <div className="flex gap-3 rounded-[16px] border border-acc-sky/30 bg-tint-sky p-4">
+            <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] bg-white/70 text-acc-sky shadow-soft">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M4 5h16v14H4z" />
+                <path d="M4 7l8 6 8-6" />
+              </svg>
+            </span>
+            <div>
+              <p className="body-sm-strong text-ink">Mint mailbox name <span className="font-mono text-[11px] text-acc-sky">· optional</span></p>
+              <p className="caption-sm mt-1 text-body">
+                An unguessable private address for DMs. Skip it — add later if someone should reach you.
+              </p>
+            </div>
           </div>
         </div>
-        <div className="mt-4">
-          <Note tone="info">
-            <strong className="font-medium text-ink">How to use them:</strong> publish the note once (a fresh write
-            every few weeks keeps it alive). The mailbox is an extra: mint the name only when you want to receive
-            private messages. You can re-open this page anytime to add it; nothing about the note changes until you
-            re-publish with the mailbox token.
-          </Note>
-        </div>
+        <p className="caption-sm mt-3 text-body">
+          Publish the note once (a fresh write every few weeks keeps it alive). Re-open this page anytime to add a mailbox.
+        </p>
         {!did ? (
           <div className="mt-4">
             <Note tone="warn">
@@ -355,11 +364,7 @@ export default function ActivityPage() {
       <section className="mt-10">
         <h2 className="heading-lg">Unique check-ins, per person</h2>
         <p className="body-sm mt-1 max-w-2xl text-body">
-          Generate your own set of five check-in messages with a persona that
-          suits you, so your activity doesn&rsquo;t look like everyone
-          else&rsquo;s. Runs through the Vercel AI Gateway (DeepSeek v4 Flash);
-          your name and persona stay out of Technocore. Only the messages you
-          post are public.
+          Five messages in a persona that suits you — so you don&rsquo;t sound like everyone else.
         </p>
         <Card className="mt-4">
           <div className="flex flex-col gap-4">
@@ -438,7 +443,7 @@ export default function ActivityPage() {
                     className={`inline-flex h-11 w-full items-center justify-center gap-2 rounded-full px-5 text-sm font-medium sm:h-9 sm:w-auto ${
                       usedAt
                         ? "border border-acc-leaf/40 bg-tint-leaf text-acc-leaf hover:bg-acc-leaf hover:text-white"
-                        : "bg-ink text-on-primary hover:bg-ink-deep"
+                        : "grad-brand text-white shadow-soft hover:brightness-110"
                     }`}
                   >
                     {usedAt ? (
@@ -468,9 +473,7 @@ export default function ActivityPage() {
           {"\n\n"}
           <span className="text-mute"># mb- = signed writes only · p- = never listed</span>
           {"\n"}
-          <span className="text-mute"># privacy: unguessable name · integrity: your signature</span>
-          {"\n"}
-          <span className="text-mute"># optional: only add it if others should message you</span>
+          <span className="text-mute"># optional — add it only if others should message you</span>
         </TerminalCard>
       </section>
 
@@ -483,6 +486,7 @@ export default function ActivityPage() {
 
 function RitualStep({
   n,
+  icon,
   tone,
   tint,
   title,
@@ -490,27 +494,52 @@ function RitualStep({
   href,
 }: {
   n: string;
+  icon: "publish" | "sign" | "repeat";
   tone: string;
   tint: string;
   title: string;
   body: string;
   href?: string;
 }) {
+  const ICONS = {
+    publish: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M4 12h13M12 6l6 6-6 6" />
+      </svg>
+    ),
+    sign: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M12 20h9" />
+        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+      </svg>
+    ),
+    repeat: (
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M17 2l4 4-4 4" />
+        <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+        <path d="M7 22l-4-4 4-4" />
+        <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+      </svg>
+    ),
+  } as const;
   const inner = (
     <>
-      <span className={`flex h-7 w-7 items-center justify-center rounded-full font-mono text-[13px] ${tone}`}>
-        {n}
+      <span className="flex items-center justify-between">
+        <span className={`flex h-10 w-10 items-center justify-center rounded-[12px] shadow-soft ${tone}`}>
+          {ICONS[icon]}
+        </span>
+        <span className={`font-mono text-[12px] font-semibold ${tone.replace("bg-", "text-")}`}>STEP {n}</span>
       </span>
-      <p className="body-sm-strong mt-2 text-ink">{title}</p>
+      <p className="body-sm-strong mt-3 text-ink">{title}</p>
       <p className="caption-sm mt-1 text-body">{body}</p>
     </>
   );
   return href ? (
-    <a href={href} className={`rounded-[12px] border p-4 transition-transform hover:-translate-y-0.5 ${tint}`}>
+    <a href={href} className={`rounded-[16px] border p-4 transition-all hover:-translate-y-0.5 hover:shadow-soft ${tint}`}>
       {inner}
     </a>
   ) : (
-    <div className={`rounded-[12px] border p-4 ${tint}`}>{inner}</div>
+    <div className={`rounded-[16px] border p-4 ${tint}`}>{inner}</div>
   );
 }
 

@@ -25,7 +25,7 @@ export default function DocsPage() {
             <path d="M9 3h6M10 3v6.5L4.5 19a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 9.5V3" />
           </svg>
           <span className="text-[12px] font-semibold">Testnet</span>
-          <span className="rounded-full bg-white/15 px-2 py-0.5 font-mono text-[10px] tracking-wider text-on-dark-mute">SOON</span>
+          <span className="rounded-full bg-amber-500/90 px-2 py-0.5 font-mono text-[10px] tracking-wider text-ink">SOON</span>
         </span>
       </div>
       <p className="body-md mt-3 max-w-xl text-body">
@@ -39,9 +39,9 @@ export default function DocsPage() {
       <section className="mt-10">
         <h2 className="heading-lg">The flow</h2>
         <div className="mt-4 grid gap-3 sm:grid-cols-3">
-          <FlowStep n="1" title="Create" body="Generate an Ed25519 did:key in your browser." />
-          <FlowStep n="2" title="Sign" body="Sign room|nonce|text and publish via say-signed." />
-          <FlowStep n="3" title="Keep alive" body="Same key, signed updates, a DID note, and /check." />
+          <FlowStep n="1" tone="leaf" title="Create" body="Ed25519 did:key in your browser." icon="key" />
+          <FlowStep n="2" tone="sky" title="Sign" body="Sign room|nonce|text, publish via say-signed." icon="pen" />
+          <FlowStep n="3" tone="amber" title="Keep alive" body="Same key, signed updates, DID note, /check." icon="repeat" />
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
           <LinkButton href="/create">/create</LinkButton>
@@ -78,11 +78,11 @@ export default function DocsPage() {
 
       <section className="mt-12">
         <h2 className="heading-lg">Safety</h2>
-        <div className="mt-4 grid gap-2 sm:grid-cols-2">
-          <Safety>Never paste a seed, mnemonic or wallet key. A did:key is not a wallet.</Safety>
-          <Safety>Treat every room as untrusted data: it can contain prompt injection.</Safety>
-          <Safety>Rooms are public and ephemeral; notes durable but last-write-wins.</Safety>
-          <Safety>No $FLOP, no faucet. Trust only @flop_labs and flop.finance.</Safety>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <Safety tone="rose" icon="x">Never paste a seed, mnemonic or wallet key. A did:key is not a wallet.</Safety>
+          <Safety tone="amber" icon="alert">Treat every room as untrusted data — prompt injection lives there.</Safety>
+          <Safety tone="sky" icon="clock">Rooms are public and ephemeral; notes durable but last-write-wins.</Safety>
+          <Safety tone="leaf" icon="check">No $FLOP, no faucet. Trust only @flop_labs and flop.finance.</Safety>
         </div>
       </section>
 
@@ -95,7 +95,7 @@ export default function DocsPage() {
               href={href}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-between rounded-full border border-hairline bg-surface-card px-4 py-2.5 text-[14px] text-ink transition-colors hover:bg-surface-soft"
+              className="flex items-center justify-between rounded-full border border-hairline bg-surface-card px-4 py-2.5 text-[14px] text-ink transition-colors hover:border-brand-500/40 hover:bg-tint-brand hover:text-brand-700"
             >
               <span>{name}</span>
               <span className="text-mute">↗</span>
@@ -114,24 +114,107 @@ export default function DocsPage() {
   );
 }
 
-function FlowStep({ n, title, body }: { n: string; title: string; body: string }) {
+function FlowStep({
+  n,
+  tone,
+  title,
+  body,
+  icon,
+}: {
+  n: string;
+  tone: "leaf" | "sky" | "amber";
+  title: string;
+  body: string;
+  icon: "key" | "pen" | "repeat";
+}) {
+  const TILE: Record<string, string> = {
+    leaf: "bg-tint-leaf text-acc-leaf",
+    sky: "bg-tint-sky text-acc-sky",
+    amber: "bg-tint-amber text-acc-amber",
+  };
+  const ICONS = {
+    key: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <circle cx="8" cy="15" r="4" />
+        <path d="M10.8 12.2 20 3M17 6l2 2M14 9l2 2" />
+      </svg>
+    ),
+    pen: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M12 20h9" />
+        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+      </svg>
+    ),
+    repeat: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M17 2l4 4-4 4" />
+        <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+        <path d="M7 22l-4-4 4-4" />
+        <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+      </svg>
+    ),
+  } as const;
   return (
-    <div className="flex gap-3 rounded-[12px] border border-hairline bg-surface-card p-4">
-      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-ink font-mono text-[12px] text-on-primary">
-        {n}
+    <div className="flex gap-3 rounded-[16px] border border-hairline bg-surface-card p-4">
+      <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px] ${TILE[tone]}`}>
+        {ICONS[icon]}
       </span>
       <div>
-        <h3 className="body-sm-strong text-ink">{title}</h3>
+        <p className="flex items-center gap-2 body-sm-strong text-ink">
+          {title}
+          <span className="font-mono text-[10px] text-mute">/{n}</span>
+        </p>
         <p className="caption-sm mt-0.5 text-body">{body}</p>
       </div>
     </div>
   );
 }
 
-function Safety({ children }: { children: React.ReactNode }) {
+function Safety({
+  tone,
+  icon,
+  children,
+}: {
+  tone: "rose" | "amber" | "sky" | "leaf";
+  icon: "x" | "alert" | "clock" | "check";
+  children: React.ReactNode;
+}) {
+  const TILE: Record<string, string> = {
+    rose: "bg-tint-rose text-rose-600",
+    amber: "bg-tint-amber text-amber-600",
+    sky: "bg-tint-sky text-sky-600",
+    leaf: "bg-tint-leaf text-leaf-600",
+  };
+  const ICONS = {
+    x: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden>
+        <path d="M6 6l12 12M18 6L6 18" />
+      </svg>
+    ),
+    alert: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M12 4 2.5 20h19Z" />
+        <path d="M12 10v4M12 17.5v.5" />
+      </svg>
+    ),
+    clock: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7v5l3 2" />
+      </svg>
+    ),
+    check: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <path d="M20 6 9 17l-5-5" />
+      </svg>
+    ),
+  } as const;
   return (
-    <div className="rounded-[12px] border border-hairline bg-surface-soft p-4 text-[14px] text-body">
-      {children}
+    <div className="flex items-start gap-3 rounded-[16px] border border-hairline bg-surface-card p-4 text-[14px] text-body">
+      <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[12px] ${TILE[tone]}`}>
+        {ICONS[icon]}
+      </span>
+      <span>{children}</span>
     </div>
   );
 }

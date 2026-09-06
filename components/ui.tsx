@@ -18,12 +18,12 @@ export function Button({
   ...rest
 }: ButtonProps) {
   const base =
-    "inline-flex items-center justify-center gap-2 rounded-full px-5 h-11 sm:h-9 text-sm font-medium select-none transition-colors disabled:cursor-not-allowed disabled:bg-surface-soft disabled:text-mute disabled:border-transparent";
+    "inline-flex items-center justify-center gap-2 rounded-full px-5 h-11 sm:h-9 text-sm font-medium select-none transition-all disabled:cursor-not-allowed disabled:bg-surface-soft disabled:text-mute disabled:border-transparent disabled:shadow-none";
   const styles: Record<ButtonVariant, string> = {
     primary:
-      "bg-ink text-on-primary hover:bg-ink-deep active:bg-ink-deep disabled:bg-surface-soft",
+      "grad-brand text-white shadow-soft hover:shadow-md hover:brightness-110 active:brightness-95 disabled:bg-surface-soft",
     secondary:
-      "bg-canvas text-ink border border-hairline-strong hover:bg-surface-soft disabled:border-transparent",
+      "bg-canvas text-ink border border-hairline-strong hover:bg-surface-soft hover:border-ink disabled:border-transparent",
     ghost: "bg-transparent text-ink hover:bg-surface-soft disabled:bg-transparent",
     "on-dark": "bg-canvas text-ink hover:bg-surface-soft disabled:bg-surface-soft",
   };
@@ -46,11 +46,11 @@ export function LinkButton({
   children: ReactNode;
 }) {
   const base =
-    "inline-flex items-center justify-center gap-2 rounded-full px-5 h-11 sm:h-9 text-sm font-medium no-underline transition-colors";
+    "inline-flex items-center justify-center gap-2 rounded-full px-5 h-11 sm:h-9 text-sm font-medium no-underline transition-all";
   const styles: Record<ButtonVariant, string> = {
-    primary: "bg-ink text-on-primary hover:bg-ink-deep",
+    primary: "grad-brand text-white shadow-soft hover:shadow-md hover:brightness-110",
     secondary:
-      "bg-canvas text-ink border border-hairline-strong hover:bg-surface-soft",
+      "bg-canvas text-ink border border-hairline-strong hover:bg-surface-soft hover:border-ink",
     ghost: "bg-transparent text-ink hover:bg-surface-soft",
     "on-dark": "bg-canvas text-ink hover:bg-surface-soft",
   };
@@ -247,17 +247,90 @@ export function StatusChip({
   tone: StatusTone;
   children: ReactNode;
 }) {
+  const styles: Record<StatusTone, string> = {
+    ok: "border-leaf-600/25 bg-tint-leaf text-leaf-600",
+    warn: "border-amber-600/25 bg-tint-amber text-amber-600",
+    empty: "border-hairline bg-surface-soft text-body",
+    error: "border-rose-600/25 bg-tint-rose text-rose-600",
+  };
   const dot: Record<StatusTone, string> = {
-    ok: "bg-terminal-green",
-    warn: "bg-terminal-yellow",
+    ok: "bg-leaf-600",
+    warn: "bg-amber-600",
     empty: "bg-mute",
-    error: "bg-terminal-red",
+    error: "bg-rose-600",
   };
   return (
     <span
-      className={`inline-flex items-center gap-2 rounded-full border border-hairline bg-surface-soft px-3 py-1 text-[13px] font-medium text-ink`}
+      className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[13px] font-medium ${styles[tone]}`}
     >
       <span className={`h-2 w-2 rounded-full ${dot[tone]}`} aria-hidden />
+      {children}
+    </span>
+  );
+}
+
+/* ---------- Colored label pill ---------- */
+
+export type ChipTone = "brand" | "leaf" | "sky" | "amber" | "violet" | "rose" | "neutral";
+
+const CHIP_STYLES: Record<ChipTone, string> = {
+  brand: "bg-tint-brand text-brand-600 border-brand-500/25",
+  leaf: "bg-tint-leaf text-leaf-600 border-leaf-600/25",
+  sky: "bg-tint-sky text-sky-600 border-sky-600/25",
+  amber: "bg-tint-amber text-amber-600 border-amber-600/25",
+  violet: "bg-tint-violet text-violet-600 border-violet-600/25",
+  rose: "bg-tint-rose text-rose-600 border-rose-600/25",
+  neutral: "bg-surface-soft text-body border-hairline",
+};
+
+export function Chip({
+  tone = "neutral",
+  className = "",
+  children,
+}: {
+  tone?: ChipTone;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] font-medium ${CHIP_STYLES[tone]} ${className}`}
+    >
+      {children}
+    </span>
+  );
+}
+
+/* ---------- Icon tile: the visual anchor of every card ---------- */
+
+export type IconTone = "brand" | "leaf" | "sky" | "amber" | "violet" | "rose";
+
+const ICON_TILES: Record<IconTone, string> = {
+  brand: "bg-tint-brand text-brand-600",
+  leaf: "bg-tint-leaf text-leaf-600",
+  sky: "bg-tint-sky text-sky-600",
+  amber: "bg-tint-amber text-amber-600",
+  violet: "bg-tint-violet text-violet-600",
+  rose: "bg-tint-rose text-rose-600",
+};
+
+export function IconTile({
+  tone = "brand",
+  size = "md",
+  children,
+  className = "",
+}: {
+  tone?: IconTone;
+  size?: "sm" | "md" | "lg";
+  children: ReactNode;
+  className?: string;
+}) {
+  const dims = size === "sm" ? "h-9 w-9" : size === "lg" ? "h-14 w-14" : "h-11 w-11";
+  return (
+    <span
+      className={`inline-flex shrink-0 items-center justify-center rounded-[14px] ${dims} ${ICON_TILES[tone]} ${className}`}
+      aria-hidden
+    >
       {children}
     </span>
   );
@@ -320,21 +393,15 @@ export function Note({
   tone?: "warn" | "ok" | "error" | "info";
   children: ReactNode;
 }) {
-  const ring: Record<string, string> = {
-    warn: "border-hairline-strong",
-    ok: "border-terminal-green/60",
-    error: "border-terminal-red/60",
-    info: "border-hairline",
-  };
-  const text: Record<string, string> = {
-    warn: "text-charcoal",
-    ok: "text-ink",
-    error: "text-ink",
-    info: "text-body",
+  const styles: Record<string, string> = {
+    warn: "border-amber-600/25 bg-tint-amber text-amber-600",
+    ok: "border-leaf-600/25 bg-tint-leaf text-leaf-600",
+    error: "border-rose-600/25 bg-tint-rose text-rose-600",
+    info: "border-brand-500/25 bg-tint-brand text-brand-700",
   };
   return (
     <div
-      className={`rounded-[12px] border bg-surface-soft px-4 py-3 text-[14px] leading-relaxed ${ring[tone]} ${text[tone]}`}
+      className={`rounded-[12px] border px-4 py-3 text-[14px] leading-relaxed ${styles[tone]}`}
     >
       {children}
     </div>

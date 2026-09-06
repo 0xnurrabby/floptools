@@ -80,12 +80,12 @@ export default async function AgentProfilePage({ params }: { params: Promise<{ d
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <p className="caption-sm text-mute">Trustcore score</p>
-            <p className="display-xl mt-1 text-ink">{score}<span className="text-lg text-mute">/1000</span></p>
+            <p className="display-xl mt-1 text-grad">{score}<span className="text-lg text-mute">/1000</span></p>
           </div>
           <StatusChip tone={tone}>{TIER_LABEL[tier]}</StatusChip>
         </div>
         <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-surface-soft">
-          <div className={`h-full rounded-full ${score >= 500 ? "bg-terminal-green" : score >= 300 ? "bg-terminal-yellow" : "bg-terminal-red"}`} style={{ width: `${score / 10}%` }} />
+          <div className={`h-full rounded-full ${score >= 500 ? "bg-leaf-600" : score >= 300 ? "bg-amber-600" : "bg-rose-600"}`} style={{ width: `${score / 10}%` }} />
         </div>
         <p className="body-sm mt-4 text-body">{metrics.summary}</p>
       </Card>

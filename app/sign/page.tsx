@@ -274,10 +274,10 @@ function SignComposer() {
   return (
     <div className="mx-auto max-w-4xl px-4 pb-10 pt-12">
       <p className="caption-sm text-mute">Step 2 of 3</p>
-      <h1 className="display-lg mt-2">Sign a message</h1>
+      <h1 className="display-lg mt-2">Sign a <span className="text-grad">message</span></h1>
       <p className="body-md mt-3 max-w-xl text-body">
         Compose, sign locally, publish. The signature covers{" "}
-        <code className="rounded-sm bg-surface-soft px-1.5 py-0.5 font-mono text-[13px]">room|nonce|text</code>{" "}
+        <code className="rounded-sm bg-tint-brand px-1.5 py-0.5 font-mono text-[13px] text-brand-700">room|nonce|text</code>{" "}
         after the sweep.
       </p>
 
@@ -391,7 +391,7 @@ function SignComposer() {
           <div>
             <h2 className="heading-lg">Receipts</h2>
             <p className="caption-sm mt-1 text-body">
-              Each receipt is a ledger acceptance (status 200 + server-assigned seq). Re-verify any record against the live ledger.
+              Each one is a ledger acceptance — status 200 + server seq. Re-verify anytime.
             </p>
           </div>
           {receipts.length > 0 ? (
