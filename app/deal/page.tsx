@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button, Card, Field, Note, Spinner, StatusChip, TextArea, TextInput } from "@/components/ui";
 import { UnlockIdentity } from "@/components/unlock";
+import { LocalTime } from "@/components/local-time";
 import { useSession } from "@/components/use-session";
 import { signDraft } from "@/lib/keyring";
 import { getClient } from "@/lib/client";
@@ -453,7 +454,7 @@ export default function DealPage() {
               {row.accepted ? <StatusChip tone="empty">accepted</StatusChip> : null}
               {!paperOnly ? <StatusChip tone="warn">non-paper rail</StatusChip> : null}
               <span className="caption-sm text-mute">
-                {row.offer.amount} {row.offer.asset} · claim by {fmt(row.offer.claimByMs)}
+                {row.offer.amount} {row.offer.asset} · claim by <LocalTime value={row.offer.claimByMs} />
               </span>
             </div>
           </div>
@@ -676,7 +677,7 @@ export default function DealPage() {
                         <div className="min-w-0">
                           <p className="body-sm-strong text-ink">Your offer · {shortContract(b.offer.id)}</p>
                           <p className="caption-sm mt-0.5 text-mute">
-                            posted as {b.role} · open until {fmt(b.offer.expiresMs)} ·{" "}
+                            posted as {b.role} · open until <LocalTime value={b.offer.expiresMs} /> ·{" "}
                             {expired ? "the offer window is closed" : "click to check acceptance"}
                           </p>
                         </div>

@@ -5,6 +5,7 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { Button, Card, CopyButton, Note, Spinner, StatusChip, TextArea } from "@/components/ui";
 import { UnlockIdentity } from "@/components/unlock";
+import { LocalTime } from "@/components/local-time";
 import { useSession } from "@/components/use-session";
 import { signDraft } from "@/lib/keyring";
 import { getClient } from "@/lib/client";
@@ -958,9 +959,9 @@ export default function DealDetailPage() {
             <div className="flex gap-2"><dt className="w-24 shrink-0 text-mute">offer id</dt><dd className="break-all font-mono text-ink">{offer?.id ?? "—"}</dd></div>
             <div className="flex gap-2"><dt className="w-24 shrink-0 text-mute">amount</dt><dd className="font-mono text-ink">{offer ? `${offer.amount} ${offer.asset}` : "—"}</dd></div>
             <div className="flex gap-2"><dt className="w-24 shrink-0 text-mute">rail</dt><dd className="font-mono text-ink">{offer?.rails.join(", ") ?? "—"}</dd></div>
-            <div className="flex gap-2"><dt className="w-24 shrink-0 text-mute">claim by</dt><dd className="text-ink">{offer ? fmtMs(offer.claimByMs) : "—"}</dd></div>
-            <div className="flex gap-2"><dt className="w-24 shrink-0 text-mute">refund after</dt><dd className="text-ink">{offer ? fmtMs(offer.refundAfterMs) : "—"}</dd></div>
-            <div className="flex gap-2"><dt className="w-24 shrink-0 text-mute">expires</dt><dd className="text-ink">{offer ? fmtMs(offer.expiresMs) : "—"}</dd></div>
+            <div className="flex gap-2"><dt className="w-24 shrink-0 text-mute">claim by</dt><dd className="text-ink">{offer ? <LocalTime value={offer.claimByMs} /> : "—"}</dd></div>
+            <div className="flex gap-2"><dt className="w-24 shrink-0 text-mute">refund after</dt><dd className="text-ink">{offer ? <LocalTime value={offer.refundAfterMs} /> : "—"}</dd></div>
+            <div className="flex gap-2"><dt className="w-24 shrink-0 text-mute">expires</dt><dd className="text-ink">{offer ? <LocalTime value={offer.expiresMs} /> : "—"}</dd></div>
           </dl>
         </Card>
       </section>
@@ -999,7 +1000,7 @@ export default function DealDetailPage() {
                         {f ? f.type : "message"}
                       </span>
                       {f && "from" in f ? <code className="font-mono text-[12px] text-body">identity_{r.from.slice(-4)}</code> : null}
-                      <span className="caption-sm text-mute">seq {r.seq} · {fmtTs(r.ts)}</span>
+                      <span className="caption-sm text-mute">seq {r.seq} · <LocalTime value={r.ts} /></span>
                     </div>
                     <span className="min-w-0 truncate text-[12px] text-body">{r.text.slice(0, 80)}</span>
                   </div>
@@ -1065,11 +1066,6 @@ function FieldLike({ label, hint, children }: { label: string; hint: string; chi
   );
 }
 
-function fmtMs(ms: number): string {
-  const d = new Date(ms);
-  return Number.isNaN(d.getTime()) ? String(ms) : d.toLocaleString();
-}
-
 function nowMs(): number {
   return Date.now();
 }
@@ -1105,8 +1101,4 @@ function NextSteps() {
   );
 }
 
-function fmtTs(ts: string): string {
-  if (!ts) return "time unknown";
-  const d = new Date(ts);
-  return Number.isNaN(d.getTime()) ? ts : d.toLocaleString();
-}
+

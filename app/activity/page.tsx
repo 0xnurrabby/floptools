@@ -15,6 +15,7 @@ import {
   TerminalCard,
 } from "@/components/ui";
 import { LimitModal } from "@/components/limit-modal";
+import { LocalTime } from "@/components/local-time";
 import { useSession } from "@/components/use-session";
 import { didNoteValue } from "@/lib/keyring";
 import { getClient } from "@/lib/client";
@@ -389,7 +390,7 @@ export default function ActivityPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="body-sm-strong text-ink">{ai.personaTitle}</span>
                   {ai.name ? <span className="caption-sm text-body">for {ai.name}</span> : null}
-                  <span className="caption-sm text-mute">generated {new Date(ai.generatedAt).toLocaleString()}</span>
+                  <span className="caption-sm text-mute">generated <LocalTime value={ai.generatedAt} /></span>
                   <button
                     className="caption-sm rounded-full px-2 py-1 text-body underline underline-offset-2 hover:text-ink"
                     onClick={() => {

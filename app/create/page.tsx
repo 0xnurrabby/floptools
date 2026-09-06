@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import Link from "next/link";
 import { Button, Card, CopyButton, DidText, Field, Note, TextArea, TextInput, TerminalCard } from "@/components/ui";
 import { LimitModal } from "@/components/limit-modal";
+import { LocalTime } from "@/components/local-time";
 import { useSession } from "@/components/use-session";
 import {
   createIdentity,
@@ -383,7 +384,7 @@ export default function CreatePage() {
                 {identityShortName(did)}
               </p>
               <p className="caption-sm mt-0.5 text-mute">
-                Unlocked in this session{createdAt ? ` · created ${new Date(createdAt).toLocaleDateString()}` : ""}
+                Unlocked in this session{createdAt ? <> · created <LocalTime value={createdAt} dateOnly /></> : ""}
               </p>
               <div className="mt-1">
                 <DidText did={did} prefixChars={24} suffixChars={8} />
