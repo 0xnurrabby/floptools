@@ -34,6 +34,31 @@ export async function framesForDid(did: string, limit = 800): Promise<TclkFrame[
   return rows.map(frameFromRow);
 }
 
+/**
+ * Every frame that belongs to this identity's deals: its own frames plus the
+ * counterparty's frames for the same contracts, plus the offers its accepts
+ * reference. A deal state can only be reconstructed when both sides' frames
+ * are present (the accept/payee side and the offer/payer side live in
+ * different dids' frames), so a per-identity profile must look past its own
+ * rows.
+ */
+export async function framesForDealOfDid(did: string, limit = 1200): Promise<TclkFrame[]> {
+  const rows = (await safeQuery(
+    `SELECT * FROM trustcore_frames
+     WHERE did = $1
+        OR (contract_id IS NOT NULL AND contract_id IN (
+              SELECT DISTINCT contract_id FROM trustcore_frames WHERE did = $1 AND contract_id IS NOT NULL))
+        OR (offer_id IS NOT NULL AND offer_id IN (
+              SELECT DISTINCT offer_id FROM trustcore_frames WHERE did = $1 AND offer_id IS NOT NULL))
+        OR (offer_id IS NOT NULL AND offer_id IN (
+              SELECT DISTINCT ref FROM trustcore_frames WHERE did = $1 AND frame_type = 'accept'))
+     ORDER BY created_at DESC
+     LIMIT $2`,
+    [did, limit],
+  )) ?? [];
+  return rows.map(frameFromRow);
+}
+
 export async function knownDids(limit = 150): Promise<string[]> {
   const rows = (await safeQuery(
     `SELECT DISTINCT did FROM trustcore_frames ORDER BY did LIMIT $1`,

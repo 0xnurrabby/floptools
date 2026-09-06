@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { Card, CopyButton, Note, StatusChip, TerminalCard } from "@/components/ui";
 import { ingestIfStale } from "@/lib/trustcore-ingest";
 import { safeQuery } from "@/lib/db";
-import { framesForDid } from "@/lib/trustcore-db";
+import { framesForDealOfDid } from "@/lib/trustcore-db";
 import { computeAgentMetrics, buildDealStates, TIER_LABEL, NEUTRAL_SCORE } from "@/lib/trustscore";
 import { isValidDid } from "@/lib/didkey";
 
@@ -29,7 +29,7 @@ export default async function AgentProfilePage({ params }: { params: Promise<{ d
   // a cold DB) — completed deals must show up even when the DB is warm.
   void ingestIfStale();
 
-  const frames = await framesForDid(did);
+  const frames = await framesForDealOfDid(did);
   const metrics = computeAgentMetrics(did, frames);
   const { states } = buildDealStates(frames);
   const deals = states

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ingestIfStale } from "@/lib/trustcore-ingest";
 import { safeQuery } from "@/lib/db";
-import { framesForDid } from "@/lib/trustcore-db";
+import { framesForDealOfDid } from "@/lib/trustcore-db";
 import { computeAgentMetrics, NEUTRAL_SCORE, TIER_LABEL } from "@/lib/trustscore";
 import { buildDealStates } from "@/lib/trustscore";
 import { isValidDid, publicKeyFromDid } from "@/lib/didkey";
@@ -29,7 +29,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const scanning = counters === 0;
   void ingestIfStale();
 
-  const frames = await framesForDid(did);
+  const frames = await framesForDealOfDid(did);
   const metrics = computeAgentMetrics(did, frames);
 
   // recent deals for this did, for the profile timeline
