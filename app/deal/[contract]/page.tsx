@@ -31,7 +31,7 @@ import {
   type RecordInput,
   type StepStatus,
 } from "@/lib/tclk-deal";
-import { findDeal, patchDeal, rememberPosted, type DealRecord } from "@/lib/deal-store";
+import { findDeal, lastPosted, patchDeal, rememberPosted, type DealRecord } from "@/lib/deal-store";
 import { identityShortName } from "@/lib/identity";
 
 interface Board {
@@ -252,6 +252,13 @@ export default function DealDetailPage() {
     if (!fold?.offer || !fold?.accept) return;
     if (fold.pairSource !== "ring") return;
     if (!isPayer && !isPayee) return;
+    // Once this browser mirrored the pair, never mirror it again — a fresh
+    // page load must not re-post offer+accept into the deal room.
+    const alreadyMirrored = lastPosted().some((p) => p.kind === "mirror" && p.contract === contract);
+    if (alreadyMirrored) {
+      mirrorPostedRef.current = true;
+      return;
+    }
     const hasMirror = board.records.some((r) => {
       if (!r.room.startsWith(dealRoomName)) return false;
       const t = decodeFrame(r.text)?.type;
@@ -308,8 +315,22 @@ export default function DealDetailPage() {
     rec.statement === accept.statement &&
     rec.refundAfterMs === offer.refundAfterMs;
 
+  /**
+   * Idempotency: is this kind of frame already on the board for this contract?
+   * The venue's ring can drop records (and a fresh page load then shows an
+   * earlier state), which used to make the action buttons reappear and let a
+   * second click post the same frame again. Never repost what is already
+   * visible — say so instead.
+   */
+  const frameOnBoard = (type: "lock" | "reveal" | "refund" | "cancel" | "receipt"): boolean =>
+    board.records.some((r) => {
+      const f = decodeFrame(r.text);
+      return f !== null && f.type === type && (f as { contract?: string }).contract === contract;
+    });
+
   const writePaperRecord = async (overwrite = false) => {
     if (!offer || !accept) return;
+    if (busy !== null) return;
     setBusy("paper");
     setActionMsg(null);
     try {
@@ -379,6 +400,11 @@ export default function DealDetailPage() {
   const postLock = async () => {
     if (!offer || !did) return;
     if (!dealRoomName) return;
+    if (busy !== null) return;
+    if (fold?.lock || deal?.lock || frameOnBoard("lock")) {
+      setActionMsg({ ok: true, text: "The lock is already on the board for this contract — nothing to repost." });
+      return;
+    }
     setBusy("lock");
     setActionMsg(null);
     try {
@@ -413,10 +439,20 @@ export default function DealDetailPage() {
   const postWork = async () => {
     if (!did || !dealRoomName) return;
     if (!workText.trim()) return;
+    if (busy !== null) return;
+    const trimmed = workText.trim();
+    const already = board.records.some(
+      (r) => r.room.startsWith(dealRoomName) && !r.text.startsWith("tclk1 ") && r.text.trim() === trimmed,
+    );
+    if (already) {
+      setActionMsg({ ok: true, text: "That deliverable is already on the board — nothing to repost." });
+      setWorkText("");
+      return;
+    }
     setBusy("work");
     setActionMsg(null);
     try {
-      await postTo(dealRoomName, workText.trim());
+      await postTo(dealRoomName, trimmed);
       rememberPosted({ kind: "work", contract, at: nowMs(), detail: "deliverable message in deal room" });
       setActionMsg({ ok: true, text: "Your deliverable is on the board. Now reveal the secret to claim the deal." });
       setWorkText("");
@@ -430,6 +466,11 @@ export default function DealDetailPage() {
 
   const reveal = async () => {
     if (!did || !accept || !deal || !deal.preimage || !dealRoomName) return;
+    if (busy !== null) return;
+    if (fold?.reveal || deal?.reveal || frameOnBoard("reveal")) {
+      setActionMsg({ ok: true, text: "The reveal is already on the board — the deal is claimed. Publish the receipt if you have not yet." });
+      return;
+    }
     setBusy("reveal");
     setActionMsg(null);
     try {
@@ -464,6 +505,11 @@ export default function DealDetailPage() {
 
   const postRefund = async () => {
     if (!did || !dealRoomName) return;
+    if (busy !== null) return;
+    if (fold?.refund || frameOnBoard("refund")) {
+      setActionMsg({ ok: true, text: "The refund is already on the board for this contract — nothing to repost." });
+      return;
+    }
     setBusy("refund");
     setActionMsg(null);
     try {
@@ -481,6 +527,11 @@ export default function DealDetailPage() {
 
   const postCancel = async () => {
     if (!did || !dealRoomName) return;
+    if (busy !== null) return;
+    if (fold?.cancel || frameOnBoard("cancel")) {
+      setActionMsg({ ok: true, text: "The cancel is already on the board for this contract — nothing to repost." });
+      return;
+    }
     setBusy("cancel");
     setActionMsg(null);
     try {
@@ -500,6 +551,11 @@ export default function DealDetailPage() {
     if (!did || !dealRoomName) return;
     const outcome = fold?.state === "claimed" ? "claimed" : fold?.state === "refunded" ? "refunded" : fold?.state === "cancelled" ? "cancelled" : null;
     if (!outcome) return;
+    if (busy !== null) return;
+    if (fold?.receipt || deal?.receipt || frameOnBoard("receipt")) {
+      setActionMsg({ ok: true, text: "The receipt is already on the board for this contract — nothing to repost." });
+      return;
+    }
     setBusy("receipt");
     setActionMsg(null);
     try {
@@ -924,21 +980,32 @@ export default function DealDetailPage() {
           <p className="caption-sm mt-2 text-mute">Nothing found in tclk-offers or the deal room yet.</p>
         ) : (
           <div className="mt-3 space-y-2">
-            {board.records.map((r, i) => {
-              const f = decodeFrame(r.text);
-              return (
-                <div key={i} className="flex flex-wrap items-center justify-between gap-2 rounded-[12px] border border-hairline bg-surface-card px-4 py-2.5">
-                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    <span className={`rounded-full px-2.5 py-0.5 font-mono text-[11px] ${f ? "bg-tint-brand text-brand-700" : "bg-surface-soft text-body"}`}>
-                      {f ? f.type : "message"}
-                    </span>
-                    {f && "from" in f ? <code className="font-mono text-[12px] text-body">identity_{r.from.slice(-4)}</code> : null}
-                    <span className="caption-sm text-mute">seq {r.seq} · {fmtTs(r.ts)}</span>
+            {(() => {
+              // The pair is shown from the offers ring AND from the deal-room
+              // mirror; show each distinct frame once so the list does not
+              // look like the post landed twice.
+              const seen = new Set<string>();
+              return board.records.map((r, i) => {
+                const f = decodeFrame(r.text);
+                if (f) {
+                  const sig = `${f.type}|${r.from}|${f.type === "offer" ? f.id : (f as { contract?: string }).contract ?? ""}`;
+                  if (seen.has(sig)) return null;
+                  seen.add(sig);
+                }
+                return (
+                  <div key={i} className="flex flex-wrap items-center justify-between gap-2 rounded-[12px] border border-hairline bg-surface-card px-4 py-2.5">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <span className={`rounded-full px-2.5 py-0.5 font-mono text-[11px] ${f ? "bg-tint-brand text-brand-700" : "bg-surface-soft text-body"}`}>
+                        {f ? f.type : "message"}
+                      </span>
+                      {f && "from" in f ? <code className="font-mono text-[12px] text-body">identity_{r.from.slice(-4)}</code> : null}
+                      <span className="caption-sm text-mute">seq {r.seq} · {fmtTs(r.ts)}</span>
+                    </div>
+                    <span className="min-w-0 truncate text-[12px] text-body">{r.text.slice(0, 80)}</span>
                   </div>
-                  <span className="min-w-0 truncate text-[12px] text-body">{r.text.slice(0, 80)}</span>
-                </div>
-              );
-            })}
+                );
+              });
+            })()}
           </div>
         )}
         {paper ? (
