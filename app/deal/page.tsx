@@ -409,7 +409,7 @@ export default function DealPage() {
           createdAt: nowMs(),
         });
       }
-      void postPairMirror(deal.offer, data.accept).catch(() => {});
+      await postPairMirror(deal.offer, data.accept).catch(() => {});
       loadBoardDeals(did);
       router.push(`/deal/${encodeURIComponent(data.accept.contract)}`);
     } catch (e) {
@@ -472,7 +472,9 @@ export default function DealPage() {
         createdAt: nowMs(),
       });
       rememberPosted({ kind: "accept", contract: accept.contract, at: nowMs(), detail: "accept in tclk-offers" });
-      void postPairMirror(row.offer, accept).catch(() => {});
+      // Mirror the pair into the deal room BEFORE navigating, so the deal page
+      // can always find it — even if the offers ring rotates meanwhile.
+      await postPairMirror(row.offer, accept).catch(() => {});
       loadBoardDeals(did);
       router.push(`/deal/${encodeURIComponent(accept.contract)}`);
     } catch (e) {

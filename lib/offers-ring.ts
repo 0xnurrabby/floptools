@@ -25,9 +25,11 @@ const BASE = (
   "https://technocore.chat"
 ).replace(/\/+$/, "");
 
-export async function fetchOffersExport(): Promise<string> {
+export async function fetchOffersExport(opts: { fresh?: boolean } = {}): Promise<string> {
   const now = Date.now();
-  if (exportCache && now - exportCache.at < TTL_MS) return exportCache.body;
+  // Exact lookups (contract / offerId / did) must see a frame posted seconds
+  // ago, so they bypass the brief snapshot cache; browse lists keep it.
+  if (!opts.fresh && exportCache && now - exportCache.at < TTL_MS) return exportCache.body;
   const res = await fetch(`${BASE}/r/${OFFERS_ROOM}/export`, {
     cache: "no-store",
     signal: AbortSignal.timeout(45_000),

@@ -689,12 +689,12 @@ export default function DealDetailPage() {
               ? "ok"
               : fold?.state === "refunded" || fold?.state === "cancelled" || fold?.state === "expired"
                 ? "warn"
-                : pairState.status === "notfound"
+                : pairState.status === "notfound" && !fold?.offer
                   ? "warn"
                   : "empty"
           }
         >
-          {pairState.status === "notfound" ? "not found on board" : fold?.state ?? "reading"}
+          {pairState.status === "notfound" && !fold?.offer ? "not found on board" : fold?.state ?? "reading"}
         </StatusChip>
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-3">
@@ -776,7 +776,7 @@ export default function DealDetailPage() {
         </div>
       ) : null}
 
-      {pairState.status === "notfound" ? (
+      {pairState.status === "notfound" && !fold?.offer ? (
         <div className="mt-4">
           <Note tone="warn">
             This deal&apos;s offer+accept is not on the public board right now — it scrolled out of the venue&apos;s

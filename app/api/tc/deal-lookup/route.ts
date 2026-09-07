@@ -29,9 +29,49 @@ import { safeQuery } from "@/lib/db";
 
 const HEX64 = /^0x[0-9a-f]{64}$/;
 
+const BASE = (
+  process.env.TECHNOCORE_BASE_URL ??
+  process.env.NEXT_PUBLIC_TECHNOCORE_BASE_URL ??
+  "https://technocore.chat"
+).replace(/\/+$/, "");
+
 // The retained ring export is several MB and the venue is occasionally slow;
 // give the function room to fetch and scan it once.
 export const maxDuration = 60;
+
+/** Match the ONE offer+accept pair whose recomputed contract id equals `contract`. */
+async function matchPairForContract(
+  records: RecordInput[],
+  contract: string,
+): Promise<{ offer: OfferFrame; offerRecord: RecordInput; accept: AcceptFrame; acceptRecord: RecordInput } | null> {
+  const offers: { record: RecordInput; frame: OfferFrame }[] = [];
+  const acceptsByRef = new Map<string, { record: RecordInput; frame: AcceptFrame }[]>();
+  for (const r of records) {
+    const frame = decodeFrame(r.text);
+    if (!frame) continue;
+    if (frame.type === "offer") offers.push({ record: r, frame });
+    else if (frame.type === "accept") {
+      const list = acceptsByRef.get(frame.ref) ?? [];
+      list.push({ record: r, frame });
+      acceptsByRef.set(frame.ref, list);
+    }
+  }
+  for (const o of offers) {
+    for (const a of acceptsByRef.get(o.frame.id) ?? []) {
+      const computed = await contractId(o.frame, {
+        from: a.frame.from,
+        ref: a.frame.ref,
+        statement: a.frame.statement,
+        paymentKey: a.frame.paymentKey,
+        nonce: a.frame.nonce,
+      });
+      if (computed.toLowerCase() === contract.toLowerCase()) {
+        return { offer: o.frame, offerRecord: o.record, accept: a.frame, acceptRecord: a.record };
+      }
+    }
+  }
+  return null;
+}
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const contract = req.nextUrl.searchParams.get("contract");
@@ -50,7 +90,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   let records: RecordInput[];
   try {
-    records = parseOffersExport(await fetchOffersExport());
+    // Exact lookups must see a frame that landed seconds ago (right after an
+    // accept), so bypass the brief snapshot cache; the browse list keeps it.
+    records = parseOffersExport(await fetchOffersExport({ fresh: offersParam !== "1" }));
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : "could not read the offers ring" }, { status: 502 });
   }
@@ -111,31 +153,38 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   }
 
   if (contract) {
-    const offers: { record: RecordInput; frame: OfferFrame }[] = [];
-    const acceptsByRef = new Map<string, { record: RecordInput; frame: AcceptFrame }[]>();
-    for (const r of records) {
-      const frame = decodeFrame(r.text);
-      if (!frame) continue;
-      if (frame.type === "offer") offers.push({ record: r, frame });
-      else if (frame.type === "accept") {
-        const list = acceptsByRef.get(frame.ref) ?? [];
-        list.push({ record: r, frame });
-        acceptsByRef.set(frame.ref, list);
-      }
+    const hit = await matchPairForContract(records, contract);
+    if (hit) {
+      return NextResponse.json({ found: true, ...hit });
     }
-    for (const o of offers) {
-      for (const a of acceptsByRef.get(o.frame.id) ?? []) {
-        const computed = await contractId(o.frame, {
-          from: a.frame.from,
-          ref: a.frame.ref,
-          statement: a.frame.statement,
-          paymentKey: a.frame.paymentKey,
-          nonce: a.frame.nonce,
-        });
-        if (computed.toLowerCase() === contract.toLowerCase()) {
-          return NextResponse.json({ found: true, offer: o.frame, offerRecord: o.record, accept: a.frame, acceptRecord: a.record });
+    // The offers ring can rotate the pair away even while the deal is live —
+    // fall back to the signed copy in the deal room (mb-p-tclk-…), which the
+    // app mirrors at accept time. A deal that exists must never read as
+    // "not found on board".
+    try {
+      const room = `mb-p-tclk-${contract.slice(2, 18)}`;
+      const res = await fetch(`${BASE}/r/${room}?format=json&limit=200`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(20_000),
+        headers: { Accept: "application/json;q=0.9" },
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { messages?: { seq?: number; ts?: string; from?: string; text?: string; sig?: string }[] };
+        const roomRecords: RecordInput[] = (data.messages ?? []).map((m) => ({
+          room,
+          from: typeof m.from === "string" ? m.from : "",
+          text: typeof m.text === "string" ? m.text : "",
+          seq: typeof m.seq === "number" ? m.seq : 0,
+          ts: typeof m.ts === "string" ? m.ts : "",
+          ...(typeof m.sig === "string" ? { sig: m.sig } : {}),
+        }));
+        const mirror = await matchPairForContract(roomRecords, contract);
+        if (mirror) {
+          return NextResponse.json({ found: true, ...mirror });
         }
       }
+    } catch {
+      /* room unavailable — report honestly below */
     }
     return NextResponse.json({ found: false });
   }
