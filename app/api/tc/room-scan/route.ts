@@ -47,6 +47,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
   }
 
+  // "fast" reads the newest-200 tail per room (instant, covers fresh activity);
+  // "deep" (default) scans each room's full retained export in parallel.
+  const mode = req.nextUrl.searchParams.get("mode") === "fast" ? "fast" : "deep";
+
   const rooms: Record<string, { retainedFirst: number; retainedLast: number; messages: number; error?: string }> = {};
   const byDid: Record<string, Record<string, RoomEntry>> = {};
   for (const d of dids) {
@@ -54,43 +58,54 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     for (const room of SCAN_ROOMS) byDid[d][room] = emptyEntry();
   }
 
-  // All rooms scan in parallel: the wall time is the slowest single export,
-  // not the sum of four.
+  const tailClient = new TechnocoreClient({ mode: "direct" });
+
   await Promise.all(
     SCAN_ROOMS.map(async (room) => {
       try {
-        const body = await fetchRoomExport(room);
+        let messages: { seq: number; ts: string; from: string; text: string }[] = [];
         let first = 0;
         let last = 0;
-        let total = 0;
-        for (const line of body.split("\n")) {
-          if (!line.trim()) continue;
-          let m: { seq?: number; ts?: string; from?: string; text?: string };
-          try {
-            m = JSON.parse(line) as typeof m;
-          } catch {
-            continue;
+        if (mode === "fast") {
+          const read = await tailClient.readRoom(room, { limit: 200 });
+          first = read.first_seq;
+          last = read.last_seq;
+          messages = read.messages
+            .filter((m) => typeof m.from === "string" && typeof m.text === "string")
+            .map((m) => ({
+              seq: typeof m.seq === "number" ? m.seq : 0,
+              ts: typeof m.ts === "string" ? m.ts : "",
+              from: m.from,
+              text: m.text,
+            }));
+        } else {
+          const body = await fetchRoomExport(room);
+          for (const line of body.split("\n")) {
+            if (!line.trim()) continue;
+            let m: { seq?: number; ts?: string; from?: string; text?: string };
+            try {
+              m = JSON.parse(line) as typeof m;
+            } catch {
+              continue;
+            }
+            if (typeof m?.from !== "string" || typeof m?.text !== "string") continue;
+            const seq = typeof m.seq === "number" ? m.seq : 0;
+            if (first === 0 || seq < first) first = seq;
+            if (seq > last) last = seq;
+            messages.push({ seq, ts: typeof m.ts === "string" ? m.ts : "", from: m.from, text: m.text });
           }
-          if (typeof m?.from !== "string" || typeof m?.text !== "string") continue;
-          total++;
-          if (typeof m.seq === "number") {
-            if (first === 0 || m.seq < first) first = m.seq;
-            if (m.seq > last) last = m.seq;
-          }
-          const entry = byDid[m.from]?.[room];
+        }
+        const total = messages.length;
+        for (const msg of messages) {
+          const entry = byDid[msg.from]?.[room];
           if (!entry) continue;
-          const msg = {
-            seq: typeof m.seq === "number" ? m.seq : 0,
-            ts: typeof m.ts === "string" ? m.ts : "",
-            text: m.text,
-          };
           entry.count++;
           if (msg.seq >= entry.latestSeq) {
             entry.latestSeq = msg.seq;
             entry.latestTs = msg.ts;
             entry.latestText = msg.text;
           }
-          entry.recent.push(msg);
+          entry.recent.push({ seq: msg.seq, ts: msg.ts, text: msg.text });
           if (entry.recent.length > RECENT_PER_ROOM) entry.recent.shift();
         }
         for (const d of dids) byDid[d][room].recent.reverse();

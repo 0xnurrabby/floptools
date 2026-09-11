@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Button, Card, Field, Note, Spinner, StatusChip, TextArea } from "@/components/ui";
 import { LocalTime } from "@/components/local-time";
@@ -42,8 +42,10 @@ export default function BulkCheckPage() {
   const [preset, setPreset] = useState<"checking" | "pro" | "not-pro">("checking");
   const [pasted, setPasted] = useState("");
   const [busy, setBusy] = useState(false);
+  const [deep, setDeep] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [scans, setScans] = useState<DidScan[] | null>(null);
+  const runTokenRef = useRef(0);
 
   useEffect(() => {
     void fetch("/api/pro/status", { cache: "no-store" })
@@ -85,31 +87,30 @@ export default function BulkCheckPage() {
       setError(`At most ${MAX_DIDS} wallets per check — this set has ${unique.length}.`);
       return;
     }
+    const token = ++runTokenRef.current;
     setBusy(true);
     setError(null);
     setScans(null);
-    try {
-      const results = new Map<string, DidScan>();
-      for (const d of unique) {
-        results.set(d, {
-          did: d,
-          short: `identity_${d.slice(-4)}`,
-          note: { found: false, path: "" },
-          rooms: {},
-          total: 0,
-        });
-      }
-      // One request for the whole set: the server scans each room once and the
-      // export cache serves every DID from that single scan.
-      const res = await fetch(`/api/tc/room-scan?dids=${encodeURIComponent(unique.join(","))}`, { cache: "no-store" });
-      const data = (await res.json()) as {
-        ok?: boolean;
-        error?: string;
-        rooms?: Record<string, { error?: string }>;
-        dids?: Record<string, Record<string, RoomScan>>;
-        notes?: Record<string, { found: boolean; path: string; value?: string }>;
-      };
-      if (!res.ok || !data.ok) throw new Error(data.error ?? `scan failed (HTTP ${res.status})`);
+    setDeep(false);
+
+    const results = new Map<string, DidScan>();
+    for (const d of unique) {
+      results.set(d, {
+        did: d,
+        short: `identity_${d.slice(-4)}`,
+        note: { found: false, path: "" },
+        rooms: {},
+        total: 0,
+      });
+    }
+    type ScanPayload = {
+      ok?: boolean;
+      error?: string;
+      rooms?: Record<string, { error?: string }>;
+      dids?: Record<string, Record<string, RoomScan>>;
+      notes?: Record<string, { found: boolean; path: string; value?: string }>;
+    };
+    const apply = (data: ScanPayload) => {
       const roomErrors = Object.values(data.rooms ?? {})
         .map((r) => r.error)
         .filter(Boolean);
@@ -121,11 +122,41 @@ export default function BulkCheckPage() {
         entry.total = SCAN_ROOMS.reduce((n, room) => n + (rooms[room]?.count ?? 0), 0);
         if (roomErrors.length > 0 && entry.total === 0) entry.error = roomErrors[0];
       }
-      setScans([...results.values()]);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
+      if (token === runTokenRef.current) setScans([...results.values()]);
+    };
+
+    try {
+      // 1. FAST: newest tails + notes — results on screen in a second or two.
+      const fastRes = await fetch(
+        `/api/tc/room-scan?mode=fast&dids=${encodeURIComponent(unique.join(","))}`,
+        { cache: "no-store" },
+      );
+      const fastData = (await fastRes.json()) as ScanPayload;
+      if (!fastRes.ok || !fastData.ok) throw new Error(fastData.error ?? `scan failed (HTTP ${fastRes.status})`);
+      apply(fastData);
       setBusy(false);
+    } catch (e) {
+      if (token === runTokenRef.current) {
+        setError((e as Error).message);
+        setBusy(false);
+      }
+      return;
+    }
+
+    // 2. DEEP: full retained rings in the background, merged when it lands.
+    // A deep failure never removes the fast results.
+    if (token !== runTokenRef.current) return;
+    setDeep(true);
+    try {
+      const deepRes = await fetch(`/api/tc/room-scan?dids=${encodeURIComponent(unique.join(","))}`, {
+        cache: "no-store",
+      });
+      const deepData = (await deepRes.json()) as ScanPayload;
+      if (deepRes.ok && deepData.ok) apply(deepData);
+    } catch {
+      /* keep the fast results */
+    } finally {
+      if (token === runTokenRef.current) setDeep(false);
     }
   };
 
@@ -194,9 +225,10 @@ export default function BulkCheckPage() {
         <section className="mt-8">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="heading-lg">Results</h2>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <StatusChip tone="ok">{withNote} note{withNote === 1 ? "" : "s"}</StatusChip>
               <StatusChip tone="ok">{withActivity} with activity</StatusChip>
+              {deep ? <StatusChip tone="empty">deep scan of retained rings…</StatusChip> : null}
               <Button variant="secondary" onClick={() => void run(scans.map((s) => s.did))} disabled={busy}>
                 Refresh
               </Button>

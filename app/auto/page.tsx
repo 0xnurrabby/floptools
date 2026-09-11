@@ -469,8 +469,9 @@ export default function ProAutoPage() {
       const styleByDid = new Map<string, string>();
       const activityByDid = new Map<string, number>();
       try {
+        // Fast tail scan is plenty for the voice hint — import stays quick.
         const res = await fetch(
-          `/api/tc/room-scan?dids=${encodeURIComponent(imported.map((w) => w.did).join(","))}`,
+          `/api/tc/room-scan?mode=fast&dids=${encodeURIComponent(imported.map((w) => w.did).join(","))}`,
           { cache: "no-store" },
         );
         const data = (await res.json()) as {

@@ -44,6 +44,7 @@ export default function CheckPage() {
   const [result, setResult] = useState<DidCheckResult | null>(null);
   const [tcResult, setTcResult] = useState<TcAgentResult | null>(null);
   const [autoRan, setAutoRan] = useState(false);
+  const [deepScanning, setDeepScanning] = useState(false);
 
   const [recRoom, setRecRoom] = useState("");
   const [recSeq, setRecSeq] = useState("");
@@ -66,24 +67,35 @@ export default function CheckPage() {
         .then(async () => {
           setError(null);
           setResult(null);
+          setDeepScanning(false);
           const local = receipts
             .filter((r) => r.did === candidate)
             .map((r) => ({ room: r.room, seq: r.seq, nonce: r.nonce, text: r.text, ts: r.ts }));
-          const [res, tc, scan] = await Promise.all([
+          // Fast pass: note + tail reads + trustcore frames paint immediately.
+          const [res, tc] = await Promise.all([
             checkDid(getClient(), candidate, { local }),
             fetch(`/api/trustcore/agent?did=${encodeURIComponent(candidate)}`, { cache: "no-store" })
               .then((r) => r.json())
               .catch(() => null),
-            // Full retained-ring scan: the tail alone makes published activity
-            // look missing once a busy room rolls past it.
-            fetch(`/api/tc/room-scan?did=${encodeURIComponent(candidate)}`, { cache: "no-store" })
-              .then((r) => r.json() as Promise<{ dids?: Record<string, Record<string, DeepScanRoom>> } | null>)
-              .catch(() => null),
           ]);
-          const deep = scan?.dids?.[candidate];
-          setResult(mergeDeepScan(res, deep));
+          setResult(res);
           setTcResult(tc);
           setAutoRan(true);
+
+          // Deep pass: the full retained ring scans in the background and
+          // merges when it lands (a slow scan never blocks the page).
+          setDeepScanning(true);
+          void fetch(`/api/tc/room-scan?did=${encodeURIComponent(candidate)}`, { cache: "no-store" })
+            .then((r) => r.json() as Promise<{ dids?: Record<string, Record<string, DeepScanRoom>> } | null>)
+            .then((scan) => {
+              const deep = scan?.dids?.[candidate];
+              if (!deep) return;
+              setResult((prev) => (prev && prev.did === candidate ? mergeDeepScan(prev, deep) : prev));
+            })
+            .catch(() => {
+              /* keep the fast results */
+            })
+            .finally(() => setDeepScanning(false));
         })
         .catch(async (e) => {
           const msg = e instanceof TechnocoreError ? e.body.slice(0, 300) : (e as Error).message;
@@ -227,6 +239,9 @@ export default function CheckPage() {
             <h2 className="heading-md">Signed activity by room</h2>
             <p className="caption-sm mt-1 text-body">
               On ledger = found in the room&apos;s full retained ring (the whole export, not just the newest-200 tail that rolls within minutes). Confirmed = accepted at publish time from this browser.
+              {deepScanning ? (
+                <span className="text-mute"> Deep scan of the retained rings is running — results update when it lands.</span>
+              ) : null}
             </p>
             <div className="mt-3 space-y-3">
               {result.activity.length === 0 ? (
