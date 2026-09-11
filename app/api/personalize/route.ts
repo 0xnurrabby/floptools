@@ -9,6 +9,7 @@ import { safeExec, safeQuery } from "@/lib/db";
 import { clientIp } from "@/lib/server-ip";
 import { AI_GEN_MAX_PER_DAY, MESSAGES } from "@/lib/limits";
 import { isValidDid } from "@/lib/didkey";
+import { isProRequest } from "@/lib/pro-auth";
 
 /**
  * POST /api/personalize
@@ -77,8 +78,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       { status: 503 },
     );
   }
+  // Pro mode: no per-IP throttle, no per-identity daily cap.
+  const pro = isProRequest(req);
   const ip = ipOf(req);
-  if (limited(ip)) {
+  if (!pro && limited(ip)) {
     return NextResponse.json(
       { error: "Too many generations, try again in a few minutes.", code: "rate_limited" },
       { status: 429 },
@@ -102,7 +105,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     typeof body.did === "string" && isValidDid(body.did) ? body.did : undefined;
 
   // Fair use: max 3 generations per identity per UTC day.
-  if (did) {
+  if (!pro && did) {
     const rows = await safeQuery(
       `SELECT COUNT(*) AS n FROM ai_generations WHERE did = $1 AND created_at > date_trunc('day', now())`,
       [did],

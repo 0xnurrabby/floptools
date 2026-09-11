@@ -3,6 +3,7 @@ import { checkLimit, registerTask, type LimitKind } from "@/lib/limits";
 import { safeExec } from "@/lib/db";
 import { clientIp } from "@/lib/server-ip";
 import { isValidDid } from "@/lib/didkey";
+import { isProRequest } from "@/lib/pro-auth";
 
 /**
  * POST /api/limits — fair-use gates used by the client before/at each action.
@@ -25,6 +26,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
   const kind = body.kind as LimitKind;
   if (!KINDS.has(kind)) return NextResponse.json({ ok: false }, { status: 400 });
+
+  // Pro mode: no limits, nothing to record.
+  if (isProRequest(req)) {
+    return NextResponse.json({ ok: true, remaining: 999, pro: true });
+  }
 
   const ip = clientIp(req.headers);
   const did = typeof body.did === "string" && isValidDid(body.did) ? body.did : undefined;
