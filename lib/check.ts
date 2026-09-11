@@ -139,6 +139,55 @@ export async function verifyRecord(
   }
 }
 
+export interface DeepScanRoom {
+  count: number;
+  latestSeq: number;
+  latestTs?: string;
+  latestText?: string;
+  recent?: { seq: number; ts: string; text: string }[];
+}
+
+/**
+ * Merge a FULL retained-ring scan (server `room-scan`, which reads each room's
+ * export) into a tail-based check result. The readable tail only holds the
+ * newest ~200 messages and rolls within minutes on busy rooms; the retained
+ * ring goes far deeper, so a genuinely published message keeps showing as
+ * on-ledger instead of flipping to "nothing" when the tail rotates.
+ */
+export function mergeDeepScan(
+  result: DidCheckResult,
+  scans: Record<string, DeepScanRoom> | undefined,
+): DidCheckResult {
+  if (!scans) return result;
+  const activity = result.activity.map((a) => {
+    const s = scans[a.room];
+    if (!s || s.count <= a.signedMessages) return a;
+    return {
+      ...a,
+      signedMessages: s.count,
+      latestSeq: Math.max(a.latestSeq, s.latestSeq),
+      latestTs: s.latestTs ?? a.latestTs,
+      latestText: s.latestText ?? a.latestText,
+      recent: s.recent && s.recent.length > 0 ? s.recent : a.recent,
+    } satisfies RoomActivity;
+  });
+  const signedMessageCount = activity.reduce((n, a) => n + a.signedMessages, 0);
+  const keyEverSigned = signedMessageCount > 0 || result.localCount > 0;
+  const state: SetupState =
+    result.checks.notePresent && keyEverSigned
+      ? "SET_UP_CORRECTLY"
+      : result.checks.notePresent || keyEverSigned
+        ? "HALF_SET_UP"
+        : "NOT_SET_UP";
+  return {
+    ...result,
+    activity,
+    signedMessageCount,
+    state,
+    checks: { ...result.checks, keyEverSigned },
+  };
+}
+
 export async function checkDid(
   client: TechnocoreClient,
   did: string,

@@ -15,7 +15,14 @@ import {
 import { useSession } from "@/components/use-session";
 import { UnlockIdentity } from "@/components/unlock";
 import { getClient, TECHNOBASE } from "@/lib/client";
-import { checkDid, verifyRecord, type DidCheckResult, type RecordVerification } from "@/lib/check";
+import {
+  checkDid,
+  mergeDeepScan,
+  verifyRecord,
+  type DeepScanRoom,
+  type DidCheckResult,
+  type RecordVerification,
+} from "@/lib/check";
 
 interface TcAgentResult {
   ok?: boolean;
@@ -55,63 +62,42 @@ export default function CheckPage() {
 
   const runFetch = useCallback(
     (candidate: string) => {
-      setError(null);
-      setResult(null);
-      const local = receipts
-        .filter((r) => r.did === candidate)
-        .map((r) => ({ room: r.room, seq: r.seq, nonce: r.nonce, text: r.text, ts: r.ts }));
-      return (async () => {
-        const [res, tc] = await Promise.all([
-          checkDid(getClient(), candidate, { local }),
-          fetch(`/api/trustcore/agent?did=${encodeURIComponent(candidate)}`, { cache: "no-store" })
-            .then((r) => r.json())
-            .catch(() => null),
-        ]);
-        setResult(res);
-        setTcResult(tc);
-        setAutoRan(true);
-      })().catch(async (e) => {
-        const msg = e instanceof TechnocoreError ? e.body.slice(0, 300) : (e as Error).message;
-        setError(`Could not complete the check: ${msg}`);
-      });
+      return Promise.resolve()
+        .then(async () => {
+          setError(null);
+          setResult(null);
+          const local = receipts
+            .filter((r) => r.did === candidate)
+            .map((r) => ({ room: r.room, seq: r.seq, nonce: r.nonce, text: r.text, ts: r.ts }));
+          const [res, tc, scan] = await Promise.all([
+            checkDid(getClient(), candidate, { local }),
+            fetch(`/api/trustcore/agent?did=${encodeURIComponent(candidate)}`, { cache: "no-store" })
+              .then((r) => r.json())
+              .catch(() => null),
+            // Full retained-ring scan: the tail alone makes published activity
+            // look missing once a busy room rolls past it.
+            fetch(`/api/tc/room-scan?did=${encodeURIComponent(candidate)}`, { cache: "no-store" })
+              .then((r) => r.json() as Promise<{ dids?: Record<string, Record<string, DeepScanRoom>> } | null>)
+              .catch(() => null),
+          ]);
+          const deep = scan?.dids?.[candidate];
+          setResult(mergeDeepScan(res, deep));
+          setTcResult(tc);
+          setAutoRan(true);
+        })
+        .catch(async (e) => {
+          const msg = e instanceof TechnocoreError ? e.body.slice(0, 300) : (e as Error).message;
+          setError(`Could not complete the check: ${msg}`);
+        });
     },
     [receipts],
   );
 
-  // Auto-check the signed-in identity once (no interaction needed). Inline
-  // promise chain: all state updates happen in callbacks, so the effect is
-  // lint-clean and the page paints instantly.
+  // Auto-check the signed-in identity once (no interaction needed).
   useEffect(() => {
     if (autoRan || !session.did || did) return;
-    const candidate = session.did;
-    const local = receipts
-      .filter((r) => r.did === candidate)
-      .map((r) => ({ room: r.room, seq: r.seq, nonce: r.nonce, text: r.text, ts: r.ts }));
-    let cancelled = false;
-    Promise.all([
-      checkDid(getClient(), candidate, { local }),
-      fetch(`/api/trustcore/agent?did=${encodeURIComponent(candidate)}`, { cache: "no-store" })
-        .then((r) => r.json())
-        .catch(() => null),
-    ])
-      .then(([res, tc]) => {
-        if (!cancelled) {
-          setResult(res);
-          setTcResult(tc);
-          setAutoRan(true);
-        }
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) {
-          const msg =
-            e instanceof TechnocoreError ? e.body.slice(0, 300) : (e as Error).message;
-          setError(`Could not complete the check: ${msg}`);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [autoRan, session.did, did, receipts]);
+    void runFetch(session.did);
+  }, [autoRan, session.did, did, runFetch]);
 
   const run = () => {
     if (!target || !isValidDid(target)) {
@@ -199,10 +185,10 @@ export default function CheckPage() {
                 ok={result.checks.keyEverSigned}
                 hint={
                   result.signedMessageCount > 0
-                    ? `${result.signedMessageCount} accepted and visible on the ledger now`
+                    ? `${result.signedMessageCount} signed message${result.signedMessageCount === 1 ? "" : "s"} retained on the public ledger`
                     : result.localCount > 0
                       ? `${result.localCount} accepted on the ledger (seq assigned, signature verifies)`
-                      : "nothing accepted"
+                      : "nothing found in the retained ring"
                 }
               />
             </div>
@@ -240,7 +226,7 @@ export default function CheckPage() {
           <div>
             <h2 className="heading-md">Signed activity by room</h2>
             <p className="caption-sm mt-1 text-body">
-              Confirmed = accepted at publish time. On ledger = still inside the readable tail (busy rooms roll quickly, but acceptances never expire).
+              On ledger = found in the room&apos;s full retained ring (the whole export, not just the newest-200 tail that rolls within minutes). Confirmed = accepted at publish time from this browser.
             </p>
             <div className="mt-3 space-y-3">
               {result.activity.length === 0 ? (
@@ -282,8 +268,8 @@ export default function CheckPage() {
             </div>
             <p className="caption-sm mt-3 text-body">
               {result.localCount > 0
-                ? "Every message was accepted by the ledger at publish time (HTTP 200, server seq) and the signature still verifies. The readable tail only shows the newest ~200 messages — the acceptance never expires."
-                : "No signed message from this key is currently in the readable tail. If you signed recently, check the receipt's seq below."}
+                ? "Every message was accepted by the ledger at publish time (HTTP 200, server seq) and the signature still verifies. Scan is the full retained ring, so newer activity stays visible longer."
+                : "No signed message from this key is in the public rooms' retained rings right now. If you signed recently, check the receipt's seq below."}
             </p>
           </div>
 
