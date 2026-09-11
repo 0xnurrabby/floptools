@@ -139,8 +139,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           { role: "user", content: `${user} Variation counter: ${variation + varOffset}.` },
         ],
         temperature: 1.1,
-        // Compact top-ups need far fewer output tokens (cheaper, faster).
-        max_tokens: compact ? 600 : 1600,
+        // Compact top-ups need far fewer output tokens (cheaper, faster), but
+        // leave room for the model's internal reasoning, or the completion
+        // comes back empty (hit the cap before any content).
+        max_tokens: compact ? 1000 : 1600,
         response_format: { type: "json_object" },
       }),
       signal: AbortSignal.timeout(45_000),
