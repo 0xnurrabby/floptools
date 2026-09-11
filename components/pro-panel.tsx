@@ -6,11 +6,11 @@ import { useRouter } from "next/navigation";
 import { Button, Card, Spinner, StatusChip } from "@/components/ui";
 
 const LINKS = [
-  { href: "/deal", label: "Deal" },
-  { href: "/create", label: "Create" },
-  { href: "/sign", label: "Sign" },
-  { href: "/activity", label: "Activity" },
-  { href: "/trustcore", label: "Trustcore" },
+  { href: "/pro/deal", label: "Deal" },
+  { href: "/pro/create", label: "Create" },
+  { href: "/pro/sign", label: "Sign" },
+  { href: "/pro/activity", label: "Activity" },
+  { href: "/pro/trustcore", label: "Trustcore" },
 ];
 
 export function ProPanel() {
