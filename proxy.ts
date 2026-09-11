@@ -11,7 +11,7 @@ import { NextRequest, NextResponse } from "next/server";
  *     Pro never silently drops back to the normal pages mid-flow.
  */
 
-const FEATURE_ROOTS = new Set(["create", "sign", "activity", "check", "deal", "trustcore", "auto"]);
+const FEATURE_ROOTS = new Set(["create", "sign", "activity", "check", "deal", "trustcore", "auto", "bulk-check"]);
 
 export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
@@ -47,5 +47,6 @@ export const config = {
     "/deal/:path*",
     "/trustcore/:path*",
     "/auto/:path*",
+    "/bulk-check/:path*",
   ],
 };

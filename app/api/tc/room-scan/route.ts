@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fetchRoomExport } from "@/lib/room-export";
-import { isValidDid } from "@/lib/didkey";
+import { didNotePaths, isValidDid } from "@/lib/didkey";
+import { TechnocoreClient } from "@/lib/technocore";
 
 /**
  * GET /api/tc/room-scan?did=… | ?dids=a,b,c
@@ -95,5 +96,29 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     }
   }
 
-  return NextResponse.json({ ok: true, rooms, dids: byDid });
+  // DID note presence (durable part) — read straight from the public ledger.
+  const client = new TechnocoreClient({ mode: "direct" });
+  const notes: Record<string, { found: boolean; path: string; value?: string }> = {};
+  await Promise.all(
+    dids.map(async (d) => {
+      try {
+        const paths = await didNotePaths(d);
+        const [sharded, legacy] = await Promise.all([
+          client.readNote(paths.sharded.ns, paths.sharded.key).catch(() => null),
+          client.readNote(paths.legacy.ns, paths.legacy.key).catch(() => null),
+        ]);
+        if (sharded?.found) {
+          notes[d] = { found: true, path: `${paths.sharded.ns}/${paths.sharded.key}`, value: sharded.value.slice(0, 200) };
+        } else if (legacy?.found) {
+          notes[d] = { found: true, path: `${paths.legacy.ns}/${paths.legacy.key}`, value: legacy.value.slice(0, 200) };
+        } else {
+          notes[d] = { found: false, path: `${paths.sharded.ns}/${paths.sharded.key}` };
+        }
+      } catch {
+        notes[d] = { found: false, path: "" };
+      }
+    }),
+  );
+
+  return NextResponse.json({ ok: true, rooms, dids: byDid, notes });
 }

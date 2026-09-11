@@ -94,6 +94,52 @@ export function makeZip(files: { name: string; data: Uint8Array<ArrayBuffer> }[]
   return new Blob([...chunks, ...central, eocd], { type: "application/zip" });
 }
 
+/**
+ * Read a ZIP produced by makeZip (store-only entries). Enough for importing
+ * the wallet files back; compressed entries are rejected honestly.
+ */
+export function readZip(buffer: ArrayBuffer): { name: string; data: Uint8Array }[] {
+  const bytes = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+  let eocd = -1;
+  const min = Math.max(0, bytes.length - 22 - 65535);
+  for (let i = bytes.length - 22; i >= min; i--) {
+    if (view.getUint32(i, true) === 0x06054b50) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) throw new Error("not a zip file");
+  const count = view.getUint16(eocd + 10, true);
+  let offset = view.getUint32(eocd + 16, true);
+  const dec = new TextDecoder();
+  const out: { name: string; data: Uint8Array }[] = [];
+  for (let i = 0; i < count; i++) {
+    if (offset + 46 > bytes.length || view.getUint32(offset, true) !== 0x02014b50) {
+      throw new Error("corrupt zip central directory");
+    }
+    const method = view.getUint16(offset + 10, true);
+    const size = view.getUint32(offset + 24, true);
+    const nameLen = view.getUint16(offset + 28, true);
+    const extraLen = view.getUint16(offset + 30, true);
+    const commentLen = view.getUint16(offset + 32, true);
+    const localOffset = view.getUint32(offset + 42, true);
+    const name = dec.decode(bytes.subarray(offset + 46, offset + 46 + nameLen));
+    if (view.getUint32(localOffset, true) !== 0x04034b50) {
+      throw new Error("corrupt zip local header");
+    }
+    const lNameLen = view.getUint16(localOffset + 26, true);
+    const lExtraLen = view.getUint16(localOffset + 28, true);
+    const dataStart = localOffset + 30 + lNameLen + lExtraLen;
+    if (method !== 0) {
+      throw new Error(`zip entry "${name}" is compressed (method ${method}); only stored zips are supported`);
+    }
+    out.push({ name, data: bytes.subarray(dataStart, dataStart + size) });
+    offset += 46 + nameLen + extraLen + commentLen;
+  }
+  return out;
+}
+
 export function downloadBlob(blob: Blob, name: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

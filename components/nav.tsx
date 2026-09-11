@@ -21,6 +21,7 @@ const LINKS = [
 /** Pro section nav: only Pro features — nothing from the normal section. */
 const PRO_LINKS = [
   { href: "/pro/auto", label: "Auto" },
+  { href: "/pro/bulk-check", label: "Bulk check" },
   { href: "/pro/deal", label: "Deal" },
   { href: "/pro/create", label: "Create" },
   { href: "/pro/sign", label: "Sign" },

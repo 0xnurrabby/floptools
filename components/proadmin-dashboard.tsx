@@ -34,6 +34,7 @@ interface ProStats {
     failures: number;
     locks: number;
     bypasses: number;
+    autoRuns: number;
     events: number;
   };
   byFeature: { feature: string; n: number }[];
@@ -48,6 +49,7 @@ const KIND_LABEL: Record<string, string> = {
   unlock_fail: "wrong pass",
   lock: "lock",
   limit_bypass: "bypass",
+  auto_run: "auto run",
 };
 
 /**
@@ -133,6 +135,7 @@ export function ProAdminDashboard() {
         <Stat label="Unique IPs" value={o.uniqueIps} sub="browsers that ever unlocked" />
         <Stat label="Failed attempts" value={o.failures} sub="wrong passcode" />
         <Stat label="Limit bypasses" value={o.bypasses} sub="gates skipped in pro mode" />
+        <Stat label="Auto runs" value={o.autoRuns} sub="wallet runs from /pro/auto" />
         <Stat label="Locks" value={o.locks} sub="pro mode closed again" />
         <Stat label="Pro events" value={o.events} sub="all rows in pro_events" />
       </div>

@@ -6,7 +6,7 @@
 
 import { safeExec, safeQuery, type Row } from "./db";
 
-export type ProEventKind = "unlock_ok" | "unlock_fail" | "lock" | "limit_bypass";
+export type ProEventKind = "unlock_ok" | "unlock_fail" | "lock" | "limit_bypass" | "auto_run";
 
 export async function recordProEvent(ip: string, kind: ProEventKind, detail?: string): Promise<void> {
   await safeExec(
@@ -23,6 +23,7 @@ export interface ProOverview {
   failures: number;
   locks: number;
   bypasses: number;
+  autoRuns: number;
   events: number;
 }
 
@@ -36,6 +37,7 @@ export async function proOverview(): Promise<ProOverview> {
        COUNT(*) FILTER (WHERE kind = 'unlock_fail') AS failures,
        COUNT(*) FILTER (WHERE kind = 'lock') AS locks,
        COUNT(*) FILTER (WHERE kind = 'limit_bypass') AS bypasses,
+       COUNT(*) FILTER (WHERE kind = 'auto_run') AS auto_runs,
        COUNT(*) AS events
      FROM pro_events`,
   )) ?? [];
@@ -49,6 +51,7 @@ export async function proOverview(): Promise<ProOverview> {
     failures: n("failures"),
     locks: n("locks"),
     bypasses: n("bypasses"),
+    autoRuns: n("auto_runs"),
     events: n("events"),
   };
 }
