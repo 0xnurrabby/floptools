@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ADMIN_COOKIE, verifySessionToken } from "@/lib/admin-auth";
+import { ADMIN_COOKIE, PROADMIN_COOKIE, verifySessionToken } from "@/lib/admin-auth";
 import { safeQuery, dbHealthy, lastDbError, type Row } from "@/lib/db";
 import { geoForMany } from "@/lib/ip-geo";
 import { TechnocoreClient } from "@/lib/technocore";
@@ -18,7 +18,12 @@ const ledgerCache = new Map<string, { active: boolean; at: number }>();
 let didListCache: { at: number; dids: Row[] } | null = null;
 
 function isAuthed(req: NextRequest): boolean {
-  return verifySessionToken(req.cookies.get(ADMIN_COOKIE)?.value);
+  // Either panel's session works here: /api/proadmin/stats delegates to this
+  // handler, and both cookies are password-gated.
+  return (
+    verifySessionToken(req.cookies.get(ADMIN_COOKIE)?.value, "admin") ||
+    verifySessionToken(req.cookies.get(PROADMIN_COOKIE)?.value, "proadmin")
+  );
 }
 
 async function counts(sql: string, params: unknown[] = []): Promise<number> {

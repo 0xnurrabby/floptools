@@ -11,33 +11,43 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 const COOKIE_NAME = "floptools_admin";
+const PROADMIN_COOKIE_NAME = "floptools_proadmin";
 const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? "Nur1@2@3";
+/** The pro admin panel shares the admin password unless overridden. */
+export const PROADMIN_PASSWORD = process.env.PROADMIN_PASSWORD ?? ADMIN_PASSWORD;
 
-function cookieSecret(): Buffer {
+/** Two independent panels: /admin and /proadmin. */
+export type Panel = "admin" | "proadmin";
+
+function baseSecret(): string {
   const env = process.env.ADMIN_COOKIE_SECRET;
-  const raw = env && env.length >= 16 ? env : ADMIN_PASSWORD + "::floptools-admin-cookie-v1";
+  return env && env.length >= 16 ? env : ADMIN_PASSWORD + "::floptools-admin-cookie-v1";
+}
+
+function cookieSecret(panel: Panel): Buffer {
+  const raw = panel === "admin" ? baseSecret() : `${baseSecret()}::floptools-proadmin-cookie-v1`;
   return createHash("sha256").update(raw).digest();
 }
 
-function sign(payload: string): string {
-  return createHmac("sha256", cookieSecret()).update(payload).digest("base64url");
+function sign(payload: string, panel: Panel): string {
+  return createHmac("sha256", cookieSecret(panel)).update(payload).digest("base64url");
 }
 
-export function createSessionToken(): { value: string; expiresInMs: number } {
+export function createSessionToken(panel: Panel = "admin"): { value: string; expiresInMs: number } {
   const exp = Date.now() + SESSION_TTL_MS;
   const payload = `${exp}.${randomBytes(16).toString("base64url")}`;
-  return { value: `${payload}.${sign(payload)}`, expiresInMs: SESSION_TTL_MS };
+  return { value: `${payload}.${sign(payload, panel)}`, expiresInMs: SESSION_TTL_MS };
 }
 
-export function verifySessionToken(token: string | undefined): boolean {
+export function verifySessionToken(token: string | undefined, panel: Panel = "admin"): boolean {
   if (!token) return false;
   const parts = token.split(".");
   if (parts.length !== 3) return false;
   const [expRaw, _jti, sig] = parts;
   const payload = `${expRaw}.${_jti}`;
-  const expected = sign(payload);
+  const expected = sign(payload, panel);
   const a = Buffer.from(sig);
   const b = Buffer.from(expected);
   if (a.length !== b.length) return false;
@@ -48,11 +58,20 @@ export function verifySessionToken(token: string | undefined): boolean {
 }
 
 export const ADMIN_COOKIE = COOKIE_NAME;
+export const PROADMIN_COOKIE = PROADMIN_COOKIE_NAME;
 
 /** Constant-time password comparison. */
 export function checkPassword(candidate: string): boolean {
   const a = Buffer.from(candidate);
   const b = Buffer.from(ADMIN_PASSWORD);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+/** Constant-time pro-admin password comparison (same pass unless overridden). */
+export function checkProadminPassword(candidate: string): boolean {
+  const a = Buffer.from(candidate);
+  const b = Buffer.from(PROADMIN_PASSWORD);
   if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);
 }

@@ -4,7 +4,15 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Card, Field, Note, TextInput } from "@/components/ui";
 
-export default function AdminLogin() {
+export default function AdminLogin({
+  endpoint = "/api/admin/login",
+  title = "Admin sign in",
+  hint = "Set in server environment (ADMIN_PASSWORD).",
+}: {
+  endpoint?: string;
+  title?: string;
+  hint?: string;
+} = {}) {
   const router = useRouter();
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -14,7 +22,7 @@ export default function AdminLogin() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/admin/login", {
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password }),
@@ -35,10 +43,10 @@ export default function AdminLogin() {
   return (
     <div className="mx-auto max-w-md pt-16">
       <p className="caption-sm text-mute">Restricted area</p>
-      <h1 className="display-lg mt-2">Admin sign in</h1>
+      <h1 className="display-lg mt-2">{title}</h1>
       <Card className="mt-6">
         <div className="space-y-4">
-          <Field label="Password" hint="Set in server environment (ADMIN_PASSWORD).">
+          <Field label="Password" hint={hint}>
             <TextInput
               type="password"
               value={password}
