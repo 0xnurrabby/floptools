@@ -68,10 +68,21 @@ interface TaskRun {
   id: TaskId;
   label: string;
   room?: string;
-  status: "pending" | "running" | "done" | "retrying" | "skipped";
+  status: "pending" | "running" | "done" | "retrying" | "skipped" | "failed";
   attempts: number;
   lastError?: string;
 }
+
+const MAX_TASK_ATTEMPTS = 20;
+
+/**
+ * A wallet needs a persona when any slot text is missing. An empty object is
+ * truthy, so never test the object itself — check the slots.
+ */
+const needsPersona = (w: WalletRun): boolean => TEMPLATE_SLOTS.some((s) => !w.templates?.[s]);
+
+/** Transient failures retry until the cap; permanent ones fail fast. */
+const retryableStatus = (status: number): boolean => status === 0 || status === 429 || status >= 500;
 
 interface WalletRun {
   did: string;
@@ -207,7 +218,9 @@ export default function ProAutoPage() {
           const { ns, key } = (await didNotePaths(w.did)).sharded;
           await client.setNote(ns, key, didNoteValue(w.did), { ifAbsent: true });
         } else {
-          const text = w.templates[t.id];
+          // A missing slot text falls back to the built-in line so a persona
+          // hiccup can never spin the runner.
+          const text = w.templates[t.id] ?? BUILTIN_TEMPLATES[t.id];
           const nonce = String(nonceRef.current++);
           const sweptText = sweep(text);
           const canonical = `${t.room}|${nonce}|${sweptText}`;
@@ -224,7 +237,14 @@ export default function ProAutoPage() {
         }
         attempt++;
         const msg = e instanceof Error ? e.message.slice(0, 160) : "unknown error";
-        updateTask(w.did, t.id, { status: "retrying", attempts: attempt, lastError: msg });
+        const detail = status > 0 ? `${msg} (HTTP ${status})` : msg;
+        // Permanent errors (bad request, rejected signature) never get better
+        // by repeating; transient ones stop at a sane cap and wait for Resume.
+        if (!retryableStatus(status) || attempt >= MAX_TASK_ATTEMPTS) {
+          updateTask(w.did, t.id, { status: "failed", attempts: attempt, lastError: detail });
+          return;
+        }
+        updateTask(w.did, t.id, { status: "retrying", attempts: attempt, lastError: detail });
         await sleep(Math.min(15_000, 1000 * 2 ** Math.min(attempt, 4)));
       }
     }
@@ -241,15 +261,15 @@ export default function ProAutoPage() {
     });
   };
 
-  const startRun = async (list: WalletRun[], imported: boolean, resume: boolean) => {
+  const startRun = async (list: WalletRun[], imported: boolean) => {
     setError(null);
     stopRef.current = false;
     nonceRef.current = Date.now();
 
-    if (!resume || list.some((w) => !w.templates)) {
+    const needPersona = list.filter(needsPersona);
+    if (needPersona.length > 0) {
       setPhase("personas");
-      const todo = list.filter((w) => !w.templates);
-      await runPool(todo, PERSONA_CONCURRENCY, (w) => generatePersona(w, list.indexOf(w)));
+      await runPool(needPersona, PERSONA_CONCURRENCY, (w) => generatePersona(w, list.indexOf(w)));
     }
     if (stopRef.current) {
       setPhase("stopped");
@@ -339,7 +359,7 @@ export default function ProAutoPage() {
       const built = await buildNewWallets(n);
       setWallets(built);
       downloadWalletsZip(built);
-      await startRun(built, false, false);
+      await startRun(built, false);
     } catch (e) {
       setError((e as Error).message);
       setPhase("stopped");
@@ -415,7 +435,7 @@ export default function ProAutoPage() {
         w.tasks = taskList(notes[i]);
       });
       setWallets(imported);
-      await startRun(imported, true, false);
+      await startRun(imported, true);
     } catch (e) {
       setError((e as Error).message);
       setPhase("stopped");
@@ -429,7 +449,17 @@ export default function ProAutoPage() {
 
   const resume = () => {
     stopRef.current = false;
-    void startRun(wallets, false, true);
+    // Failed tasks get a fresh shot; done/skipped ones stay untouched.
+    const reset = wallets.map((w) => ({
+      ...w,
+      tasks: w.tasks.map((t) =>
+        t.status === "failed"
+          ? { ...t, status: "pending" as const, attempts: 0, lastError: undefined }
+          : t,
+      ),
+    }));
+    setWallets(reset);
+    void startRun(reset, false);
   };
 
   const total = wallets.reduce((n, w) => n + w.tasks.length, 0);
@@ -587,12 +617,18 @@ export default function ProAutoPage() {
                             ? "ok"
                             : t.status === "retrying"
                               ? "warn"
-                              : t.status === "skipped"
-                                ? "empty"
+                              : t.status === "failed"
+                                ? "error"
                                 : "empty"
                         }
                       >
-                        {t.status === "done" ? "published" : t.status === "skipped" ? "already on ledger" : t.status}
+                        {t.status === "done"
+                          ? "published"
+                          : t.status === "skipped"
+                            ? "already on ledger"
+                            : t.status === "failed"
+                              ? "failed — press Resume"
+                              : t.status}
                       </StatusChip>
                     </div>
                   ))}
