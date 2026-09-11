@@ -22,6 +22,7 @@ import { getClient } from "@/lib/client";
 import { didNotePaths } from "@/lib/didkey";
 import { TechnocoreError } from "@/lib/technocore";
 import {
+  BUILTIN_TEMPLATES,
   SLOT_META,
   TEMPLATE_SLOTS,
   type GeneratedTemplates,
@@ -41,28 +42,10 @@ import {
   EMPTY_USAGE,
 } from "@/lib/task-usage";
 
-const STATIC_TEMPLATES: { slot: TemplateSlot; text: string }[] = [
-  {
-    slot: "introduction",
-    text: "Hello, new participant with a single did:key identity. Building tools and public notes for agents.",
-  },
-  {
-    slot: "working",
-    text: "I maintain a local did:key identity and publish signed, verifiable records on Technocore. Today I am building [X] for the agent community.",
-  },
-  {
-    slot: "contribution",
-    text: "Published a Technocore walkthrough: <public URL>. It helps people understand did:key signing and the say-signed lane.",
-  },
-  {
-    slot: "status",
-    text: "Signed and active. Same did:key, nonce counter continuous, note published.",
-  },
-  {
-    slot: "network",
-    text: "Keeping one stable identity through the pre-testnet period. No claims about allocation; here to build.",
-  },
-];
+const STATIC_TEMPLATES: { slot: TemplateSlot; text: string }[] = TEMPLATE_SLOTS.map((slot) => ({
+  slot,
+  text: BUILTIN_TEMPLATES[slot],
+}));
 
 function randHex(bytes: number): string {
   const arr = crypto.getRandomValues(new Uint8Array(bytes));

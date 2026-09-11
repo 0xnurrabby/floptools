@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Button, Card, Spinner, StatusChip } from "@/components/ui";
 
 const LINKS = [
+  { href: "/pro/auto", label: "Auto" },
   { href: "/pro/deal", label: "Deal" },
   { href: "/pro/create", label: "Create" },
   { href: "/pro/sign", label: "Sign" },

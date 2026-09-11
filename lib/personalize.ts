@@ -31,6 +31,19 @@ export const SLOT_META: Record<TemplateSlot, { label: string; room: string }> = 
   network: { label: "Network note", room: "flop-network" },
 };
 
+/** Built-in check-in texts, used when no AI-personalized set exists. */
+export const BUILTIN_TEMPLATES: Record<TemplateSlot, string> = {
+  introduction:
+    "Hello, new participant with a single did:key identity. Building tools and public notes for agents.",
+  working:
+    "I maintain a local did:key identity and publish signed, verifiable records on Technocore. Today I am building [X] for the agent community.",
+  contribution:
+    "Published a Technocore walkthrough: <public URL>. It helps people understand did:key signing and the say-signed lane.",
+  status: "Signed and active. Same did:key, nonce counter continuous, note published.",
+  network:
+    "Keeping one stable identity through the pre-testnet period. No claims about allocation; here to build.",
+};
+
 export const PERSONAS = [
   "developer",
   "creator",

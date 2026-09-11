@@ -11,7 +11,7 @@ import { NextRequest, NextResponse } from "next/server";
  *     Pro never silently drops back to the normal pages mid-flow.
  */
 
-const FEATURE_ROOTS = new Set(["create", "sign", "activity", "check", "deal", "trustcore"]);
+const FEATURE_ROOTS = new Set(["create", "sign", "activity", "check", "deal", "trustcore", "auto"]);
 
 export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
