@@ -84,17 +84,25 @@ export function buildPrompt(opts: {
   name?: string;
   persona: Persona;
   variation: number;
+  /** Shorter output for wallets that already have public history ("top-up"). */
+  compact?: boolean;
+  /** An excerpt of the identity's existing public line, so the voice matches. */
+  style?: string;
 }): { system: string; user: string } {
   const who = opts.name?.trim() ? `The operator is ${opts.name.trim()}. ` : "";
   const personaLine = describePersona(opts.persona);
+  const compact = opts.compact === true;
+  const style = opts.style?.trim().replace(/\s+/g, " ").slice(0, 240);
 
   const system = [
     "You write short check-in messages for a public text chat used by engineers.",
-    "Rules: each message is one or two sentences, under 200 characters, specific and grounded in plausible work.",
+    compact
+      ? "Rules: each message is ONE short sentence, under 110 characters, specific and grounded in plausible work. Short and real beats long and padded."
+      : "Rules: each message is one or two sentences, under 200 characters, specific and grounded in plausible work.",
     "Never use em dashes or en dashes anywhere. Use commas, colons or plain hyphens instead.",
     `Never use these words or phrases: ${BANNED.join(", ")}.`,
     "No exclamation marks. No hashtags. No emoji. No markdown. No bullets. No numbers at the start of a line.",
-    "Write like a working practitioner, not a marketer.",
+    "Write like a working practitioner, not a marketer. Quality over quantity: every line stays clear and specific even when short.",
     "Return ONLY a JSON object with these exact keys: persona_title, introduction, working, contribution, status, network.",
     `persona_title is a short credible role, e.g. "Senior systems engineer", "Technical writer for developer tools", "QA automation engineer".`,
     `Hard content boundary: ${BANNED_HINT}.`,
@@ -102,11 +110,18 @@ export function buildPrompt(opts: {
 
   const user = [
     who + `Write 5 fresh check-in messages. The operator's persona is: ${personaLine}.`,
+    style
+      ? `This identity already posts in this voice, keep it consistent with that: "${style}".`
+      : "",
     "This is variation #" + opts.variation + ": it must not repeat phrases from earlier variations.",
-    "Slot guidance: introduction (first post in a room, warm and practical), working (what is being built right now, with one concrete detail such as a tool, protocol, size or number), contribution (something delivered or published, specific), status (a calm progress note), network (a modest line about keeping one stable did:key identity active).",
+    compact
+      ? "Keep each message a single short sentence (under 110 characters), concrete, no filler. The same slot split still applies: introduction, working, contribution, status, network."
+      : "Slot guidance: introduction (first post in a room, warm and practical), working (what is being built right now, with one concrete detail such as a tool, protocol, size or number), contribution (something delivered or published, specific), status (a calm progress note), network (a modest line about keeping one stable did:key identity active).",
     "Each message must be distinct, must name a concrete detail, and must sound like real work without boasting.",
     "Never mention rewards, tokens or eligibility.",
-  ].join(" ");
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return { system, user };
 }

@@ -90,13 +90,17 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  let body: { name?: string; persona?: string; did?: string };
+  let body: { name?: string; persona?: string; did?: string; compact?: boolean; style?: string };
   try {
     body = (await req.json()) as typeof body;
   } catch {
     return NextResponse.json({ error: "Invalid JSON body.", code: "bad_request" }, { status: 400 });
   }
 
+  // Top-up mode: an identity that already has public history gets short,
+  // voice-matched messages (far fewer output tokens, same quality bar).
+  const compact = body.compact === true;
+  const style = typeof body.style === "string" ? body.style.slice(0, 240) : undefined;
   const name = typeof body.name === "string" ? body.name.slice(0, 48) : undefined;
   const rawPersona = body.persona ?? "surprise";
   const persona: Persona =
@@ -119,7 +123,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   const variation = Math.floor(Math.random() * 1_000_000);
-  const { system, user } = buildPrompt({ name, persona, variation });
+  const { system, user } = buildPrompt({ name, persona, variation, compact, style });
 
   const callGateway = async (varOffset: number) => {
     const res = await fetch(`${GATEWAY_BASE}/chat/completions`, {
@@ -135,7 +139,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           { role: "user", content: `${user} Variation counter: ${variation + varOffset}.` },
         ],
         temperature: 1.1,
-        max_tokens: 1600,
+        // Compact top-ups need far fewer output tokens (cheaper, faster).
+        max_tokens: compact ? 600 : 1600,
         response_format: { type: "json_object" },
       }),
       signal: AbortSignal.timeout(45_000),

@@ -102,6 +102,10 @@ interface WalletRun {
   personaTitle?: string;
   templates: Record<TemplateSlot, string>;
   noteAlready: boolean;
+  /** True when the wallet already has public history (note or messages). */
+  established: boolean;
+  /** Excerpt of its existing public line, so new messages match that voice. */
+  styleHint?: string;
   tasks: TaskRun[];
 }
 
@@ -188,7 +192,15 @@ export default function ProAutoPage() {
         const res = await fetch("/api/personalize", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: w.name, persona: w.persona, did: w.did }),
+          // Established wallets get compact, voice-matched top-ups (fewer
+          // tokens); fresh wallets get the full persona set.
+          body: JSON.stringify({
+            name: w.name,
+            persona: w.persona,
+            did: w.did,
+            compact: w.established,
+            style: w.styleHint,
+          }),
           signal: AbortSignal.timeout(PERSONA_TIMEOUT_MS),
         });
         const data = (await res.json()) as {
@@ -317,6 +329,7 @@ export default function ProAutoPage() {
           persona: PERSONA_CYCLE[i % PERSONA_CYCLE.length],
           templates: useAi ? ({} as Record<TemplateSlot, string>) : builtinFor(short),
           noteAlready: false,
+          established: false,
           tasks: taskList(false),
         };
       },
@@ -441,6 +454,7 @@ export default function ProAutoPage() {
           persona: PERSONA_CYCLE[imported.length % PERSONA_CYCLE.length],
           templates: useAi ? ({} as Record<TemplateSlot, string>) : builtinFor(short),
           noteAlready: false,
+          established: false,
           tasks: [],
         });
       }
@@ -450,8 +464,41 @@ export default function ProAutoPage() {
       }
       // A DID note already on the ledger is never republished; activity is.
       const notes = await Promise.all(imported.map((w) => noteExists(w.did)));
+
+      // Read each wallet's retained public voice (best effort, batched): a
+      // wallet that already posted gets SHORT, voice-matched top-up lines —
+      // cheaper AI, same quality bar, still unique.
+      const styleByDid = new Map<string, string>();
+      const activityByDid = new Map<string, number>();
+      for (let i = 0; i < imported.length; i += 20) {
+        const chunk = imported.slice(i, i + 20).map((w) => w.did);
+        try {
+          const res = await fetch(`/api/tc/room-scan?dids=${encodeURIComponent(chunk.join(","))}`, { cache: "no-store" });
+          const data = (await res.json()) as {
+            dids?: Record<string, Record<string, { count: number; latestTs?: string; latestText?: string }>>;
+          };
+          for (const did of chunk) {
+            const rooms = data.dids?.[did] ?? {};
+            let total = 0;
+            let latest: { ts: string; text: string } | null = null;
+            for (const r of Object.values(rooms)) {
+              total += r.count ?? 0;
+              if (r.latestText && r.latestTs && (!latest || r.latestTs > latest.ts)) {
+                latest = { ts: r.latestTs, text: r.latestText };
+              }
+            }
+            activityByDid.set(did, total);
+            if (latest) styleByDid.set(did, latest.text);
+          }
+        } catch {
+          /* voice hint is best-effort */
+        }
+      }
+
       imported.forEach((w, i) => {
         w.noteAlready = notes[i];
+        w.established = notes[i] || (activityByDid.get(w.did) ?? 0) > 0;
+        w.styleHint = styleByDid.get(w.did);
         w.tasks = taskList(notes[i]);
       });
       // Ready to run — the Run button appears; nothing is published yet.
