@@ -1,16 +1,21 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useSession } from "@/components/use-session";
 import { identityShortName } from "@/lib/identity";
+import { isProPath } from "@/lib/pro-route";
 
 /**
  * Animated banner pinned under the nav while an identity is unlocked.
  * Uses the design's one dark moment so the state is impossible to miss;
- * pulses softly, respects prefers-reduced-motion globally.
+ * pulses softly, respects prefers-reduced-motion globally. Hidden inside the
+ * Pro section, which is entirely separate.
  */
 export function SessionBanner() {
+  const pathname = usePathname();
   const { did } = useSession();
+  if (isProPath(pathname)) return null;
   if (!did) return null;
   const name = identityShortName(did);
   const tail = did.slice(-6);
