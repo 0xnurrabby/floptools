@@ -10,6 +10,7 @@ import { clientIp } from "@/lib/server-ip";
 import { AI_GEN_MAX_PER_DAY, MESSAGES } from "@/lib/limits";
 import { isValidDid } from "@/lib/didkey";
 import { isProRequest } from "@/lib/pro-auth";
+import { recordProEvent } from "@/lib/pro-events";
 
 /**
  * POST /api/personalize
@@ -81,6 +82,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // Pro mode: no per-IP throttle, no per-identity daily cap.
   const pro = isProRequest(req);
   const ip = ipOf(req);
+  if (pro) await recordProEvent(clientIp(req.headers), "limit_bypass", "ai_generate");
   if (!pro && limited(ip)) {
     return NextResponse.json(
       { error: "Too many generations, try again in a few minutes.", code: "rate_limited" },

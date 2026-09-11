@@ -136,6 +136,19 @@ export async function ensureSchema(): Promise<void> {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `);
+    // Pro-panel telemetry, kept apart from the app-wide stats so /proadmin
+    // and /admin never mix data.
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS pro_events (
+        id BIGSERIAL PRIMARY KEY,
+        ip TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        detail TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    await p.query(`CREATE INDEX IF NOT EXISTS idx_pro_events_created ON pro_events (created_at)`);
+    await p.query(`CREATE INDEX IF NOT EXISTS idx_pro_events_ip ON pro_events (ip)`);
     await p.query(`
       CREATE TABLE IF NOT EXISTS ip_geo (
         ip TEXT PRIMARY KEY,

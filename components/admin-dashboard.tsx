@@ -61,13 +61,7 @@ interface Stats {
 
 type Phase = "loading" | "ready" | "error" | "unauthorized";
 
-export function AdminDashboard({
-  statsEndpoint = "/api/admin/stats",
-  logoutEndpoint = "/api/admin/logout",
-}: {
-  statsEndpoint?: string;
-  logoutEndpoint?: string;
-} = {}) {
+export function AdminDashboard() {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>("loading");
   const [stats, setStats] = useState<Stats | null>(null);
@@ -75,7 +69,7 @@ export function AdminDashboard({
 
   useEffect(() => {
     let cancelled = false;
-    fetch(statsEndpoint, { cache: "no-store" })
+    fetch("/api/admin/stats", { cache: "no-store" })
       .then(async (res) => {
         if (cancelled) return;
         if (res.status === 401) {
@@ -94,7 +88,7 @@ export function AdminDashboard({
     return () => {
       cancelled = true;
     };
-  }, [refreshAt, statsEndpoint]);
+  }, [refreshAt]);
 
   const refresh = () => {
     setPhase("loading");
@@ -102,7 +96,7 @@ export function AdminDashboard({
   };
 
   const logout = async () => {
-    await fetch(logoutEndpoint, { method: "POST" });
+    await fetch("/api/admin/logout", { method: "POST" });
     router.refresh();
   };
 

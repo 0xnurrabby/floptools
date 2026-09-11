@@ -9,6 +9,7 @@ import {
   unlockBlocked,
 } from "@/lib/pro-auth";
 import { clientIp } from "@/lib/server-ip";
+import { recordProEvent } from "@/lib/pro-events";
 
 /**
  * POST /api/pro/unlock  {"passcode":"..."}
@@ -44,9 +45,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   recordUnlockAttempt(ip);
   if (!checkProPasscode(passcode)) {
+    await recordProEvent(ip, "unlock_fail");
     return NextResponse.json({ ok: false, error: "Wrong passcode." }, { status: 401 });
   }
   resetUnlockAttempts(ip);
+  await recordProEvent(ip, "unlock_ok");
 
   const { value, expiresInMs } = createProToken();
   const res = NextResponse.json({ ok: true, pro: true });

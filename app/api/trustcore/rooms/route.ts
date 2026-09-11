@@ -4,6 +4,7 @@ import { rememberDealRoom } from "@/lib/trustcore-db";
 import { safeExec, safeQuery } from "@/lib/db";
 import { clientIp } from "@/lib/server-ip";
 import { isProRequest } from "@/lib/pro-auth";
+import { recordProEvent } from "@/lib/pro-events";
 
 /**
  * POST /api/trustcore/rooms  {"room":"mb-p-tclk-<16 hex>"}
@@ -33,8 +34,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   // Bounded per IP: the deal page calls this once per contract; a spammer
-  // must not fill the table with junk names. Pro mode is exempt.
-  if (!isProRequest(req)) {
+  // must not fill the table with junk names. Pro mode is exempt (logged).
+  if (isProRequest(req)) {
+    await recordProEvent(clientIp(req.headers), "limit_bypass", "rooms");
+  } else {
     const ip = clientIp(req.headers);
     const key = `tc:rooms:${ip}`;
     const rows = await safeQuery(

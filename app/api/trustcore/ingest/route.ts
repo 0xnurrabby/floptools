@@ -3,6 +3,7 @@ import { safeExec, safeQuery } from "@/lib/db";
 import { ingestNow } from "@/lib/trustcore-ingest";
 import { clientIp } from "@/lib/server-ip";
 import { isProRequest } from "@/lib/pro-auth";
+import { recordProEvent } from "@/lib/pro-events";
 
 /**
  * POST /api/trustcore/ingest — manual "scan now" (bounded per IP).
@@ -14,8 +15,10 @@ import { isProRequest } from "@/lib/pro-auth";
 export const maxDuration = 60;
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
-  // Pro mode: no scan throttle.
-  if (!isProRequest(req)) {
+  // Pro mode: no scan throttle (logged for /proadmin).
+  if (isProRequest(req)) {
+    await recordProEvent(clientIp(req.headers), "limit_bypass", "ingest");
+  } else {
     const ip = clientIp(req.headers);
     const key = `tc:ingest:${ip}`;
     const rows = await safeQuery(

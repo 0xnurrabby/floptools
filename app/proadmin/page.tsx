@@ -1,15 +1,15 @@
 import { cookies } from "next/headers";
 import { PROADMIN_COOKIE, verifySessionToken } from "@/lib/admin-auth";
-import { AdminDashboard } from "@/components/admin-dashboard";
+import { ProAdminDashboard } from "@/components/proadmin-dashboard";
 import AdminLogin from "@/components/admin-login";
 
 export const dynamic = "force-dynamic";
 export const metadata = { title: "floptools · pro admin", robots: { index: false, follow: false } };
 
 /**
- * /proadmin — the pro admin panel. Same features as /admin, its own signed
- * cookie (floptools_proadmin) and its own login endpoint. The pass defaults to
- * the admin pass (Nur1@2@3) unless PROADMIN_PASSWORD overrides it.
+ * /proadmin — the Pro panel: Pro-mode tracking only (unlocks, failures, locks,
+ * limit bypasses). Its own signed cookie (floptools_proadmin) and login
+ * endpoint; the app-wide stats stay on /admin, deliberately unmixed.
  */
 export default async function ProAdminPage() {
   const jar = await cookies();
@@ -19,14 +19,11 @@ export default async function ProAdminPage() {
   return (
     <div className="mx-auto max-w-5xl px-4 pb-10 pt-12">
       {authed ? (
-        <AdminDashboard
-          statsEndpoint="/api/proadmin/stats"
-          logoutEndpoint="/api/proadmin/logout"
-        />
+        <ProAdminDashboard />
       ) : (
         <AdminLogin
           endpoint="/api/proadmin/login"
-          title="Pro admin sign in"
+          title="Pro panel sign in"
           hint="Pro panel password (defaults to the admin password)."
         />
       )}
