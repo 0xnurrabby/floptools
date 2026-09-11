@@ -135,12 +135,20 @@ pre,
   color: transparent;
 }
 
-/* Soft pastel halo used behind the hero */
-.hero-glow {
+/* Soft pastel halo behind the hero.
+   Radial gradients that fade to transparent INSIDE the box, plus a vertical
+   mask that fades at the top and bottom — so the tint always dissolves
+   smoothly and never gets clipped into a hard edge by the section bounds. */
+.hero-bg {
   position: absolute;
-  border-radius: 9999px;
-  filter: blur(72px);
+  inset: 0;
   pointer-events: none;
+  background:
+    radial-gradient(60% 55% at 50% 6%, rgba(79, 70, 229, 0.2), rgba(79, 70, 229, 0) 70%),
+    radial-gradient(36% 48% at 6% 42%, rgba(244, 63, 94, 0.12), rgba(244, 63, 94, 0) 70%),
+    radial-gradient(36% 48% at 94% 46%, rgba(124, 58, 237, 0.12), rgba(124, 58, 237, 0) 70%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 14%, #000 70%, transparent);
+  mask-image: linear-gradient(to bottom, transparent, #000 14%, #000 70%, transparent);
 }
 
 /* Typography scale from DESIGN.md */

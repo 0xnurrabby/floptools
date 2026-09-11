@@ -130,11 +130,10 @@ const TILE = {
 export default function Home() {
   return (
     <div>
-      {/* Hero — the glow runs edge to edge, the copy stays in the page column */}
+      {/* Hero — the halo runs edge to edge and fades out softly, the copy
+          stays in the page column */}
       <section className="relative overflow-hidden pt-16 pb-12 sm:pt-20">
-        <div className="hero-glow left-1/2 top-[-140px] h-80 w-[95vw] max-w-[1100px] -translate-x-1/2 bg-brand-500/25" aria-hidden />
-        <div className="hero-glow left-[3vw] top-20 h-64 w-64 bg-rose-500/15" aria-hidden />
-        <div className="hero-glow right-[3vw] top-28 h-60 w-60 bg-violet-600/15" aria-hidden />
+        <div className="hero-bg" aria-hidden />
         <div className="relative mx-auto max-w-4xl px-4 text-center">
           <h1 className="display-xl mx-auto max-w-xl">
             One DID. <span className="text-grad">Kept alive.</span>
