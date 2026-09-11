@@ -48,9 +48,10 @@ import { downloadBlob, makeZip, readZip } from "@/lib/zip";
  * until the ledger accepts it. Nothing is recorded on this site.
  */
 
-const MAX_WALLETS = 5;
-const WALLET_CONCURRENCY = 5;
+const MAX_WALLETS = 100;
+const WALLET_CONCURRENCY = 10;
 const PERSONA_CONCURRENCY = 3;
+const ENCRYPT_CONCURRENCY = 6;
 const ACCEPTED = new Set([409, 422]); // already on the board
 
 const PERSONA_CYCLE: Persona[] = ["developer", "creator", "tester", "surprise"];
@@ -194,8 +195,12 @@ export default function ProAutoPage() {
       } catch {
         attempt++;
         if (attempt >= 4) {
-          // Honest fallback: keep the run moving with the built-in texts.
-          patchWallet(w.did, { templates: { ...BUILTIN_TEMPLATES }, personaTitle: "built-in" });
+          // Honest fallback: built-in texts, still unique per wallet via its
+          // short name, so no two wallets publish identical lines.
+          const fallback = Object.fromEntries(
+            TEMPLATE_SLOTS.map((s) => [s, `${BUILTIN_TEMPLATES[s]} · ${w.short}`]),
+          ) as Record<TemplateSlot, string>;
+          patchWallet(w.did, { templates: fallback, personaTitle: "built-in" });
           return;
         }
         await sleep(Math.min(8000, 1000 * 2 ** attempt));
@@ -222,9 +227,9 @@ export default function ProAutoPage() {
           const { ns, key } = (await didNotePaths(w.did)).sharded;
           await client.setNote(ns, key, didNoteValue(w.did), { ifAbsent: true });
         } else {
-          // A missing slot text falls back to the built-in line so a persona
-          // hiccup can never spin the runner.
-          const text = w.templates[t.id] ?? BUILTIN_TEMPLATES[t.id];
+          // A missing slot text falls back to a unique built-in line so a
+          // persona hiccup can never spin the runner or duplicate a wallet.
+          const text = w.templates[t.id] ?? `${BUILTIN_TEMPLATES[t.id]} · ${w.short}`;
           const nonce = String(nonceRef.current++);
           const sweptText = sweep(text);
           const canonical = `${t.room}|${nonce}|${sweptText}`;
@@ -296,25 +301,29 @@ export default function ProAutoPage() {
   };
 
   const buildNewWallets = async (n: number): Promise<WalletRun[]> => {
-    const built: WalletRun[] = [];
-    for (let i = 0; i < n; i++) {
-      const seed = generateSeed();
-      const publicKey = publicKeyFromSeed(seed);
-      const did = didFromPublicKey(publicKey);
-      const file = await encryptIdentity(seed, did, publicKey, passphrase);
-      built.push({
-        did,
-        short: identityShortName(did),
-        seed,
-        file,
-        name: `${NAME_BASES[i % NAME_BASES.length]}-${did.slice(-4)}`,
-        persona: PERSONA_CYCLE[i % PERSONA_CYCLE.length],
-        templates: {} as Record<TemplateSlot, string>,
-        noteAlready: false,
-        tasks: taskList(false),
-      });
-    }
-    return built;
+    const slots: (WalletRun | null)[] = Array.from({ length: n }, () => null);
+    await runPool(
+      Array.from({ length: n }, (_, i) => i),
+      ENCRYPT_CONCURRENCY,
+      async (i) => {
+        const seed = generateSeed();
+        const publicKey = publicKeyFromSeed(seed);
+        const did = didFromPublicKey(publicKey);
+        const file = await encryptIdentity(seed, did, publicKey, passphrase);
+        slots[i] = {
+          did,
+          short: identityShortName(did),
+          seed,
+          file,
+          name: `${NAME_BASES[i % NAME_BASES.length]}-${did.slice(-4)}`,
+          persona: PERSONA_CYCLE[i % PERSONA_CYCLE.length],
+          templates: {} as Record<TemplateSlot, string>,
+          noteAlready: false,
+          tasks: taskList(false),
+        };
+      },
+    );
+    return slots.filter((w): w is WalletRun => w !== null);
   };
 
   const downloadWalletsZip = (list: WalletRun[]) => {
@@ -437,6 +446,9 @@ export default function ProAutoPage() {
         });
       }
       if (imported.length === 0) throw new Error("No wallets to import.");
+      if (imported.length > MAX_WALLETS) {
+        throw new Error(`This ZIP has ${imported.length} wallets — at most ${MAX_WALLETS} per run. Split the ZIP and import in batches.`);
+      }
       // A DID note already on the ledger is never republished; activity is.
       const notes = await Promise.all(imported.map((w) => noteExists(w.did)));
       imported.forEach((w, i) => {
@@ -648,7 +660,7 @@ export default function ProAutoPage() {
             {done} / {total} tasks published ({pct}%)
           </p>
 
-          <div className="mt-4 space-y-3">
+          <div className="mt-4 max-h-[70vh] space-y-3 overflow-y-auto pr-1">
             {wallets.map((w) => (
               <Card key={w.did}>
                 <div className="flex flex-wrap items-center justify-between gap-2">
