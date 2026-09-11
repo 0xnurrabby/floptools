@@ -276,8 +276,11 @@ export default function BulkCheckPage() {
                             ) : null}
                           </div>
                           {r?.latestText ? (
-                            <span className="min-w-0 flex-1 truncate text-[12px] text-body sm:ml-4">
-                              {r.latestText.slice(0, 90)}
+                            <span
+                              className="min-w-0 flex-1 break-words text-[12px] text-body sm:ml-4"
+                              title={r.latestText}
+                            >
+                              {r.latestText}
                             </span>
                           ) : null}
                         </div>

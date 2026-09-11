@@ -308,7 +308,9 @@ export default function CheckPage() {
                     {row.seq ? <span className="font-mono text-[12px] text-mute">seq {row.seq}</span> : null}
                     {row.extra ? <span className="caption-sm text-body">{row.extra}</span> : null}
                   </div>
-                  <span className="min-w-0 flex-1 truncate text-[13px] text-body sm:ml-4">{row.text}</span>
+                  <span className="min-w-0 flex-1 truncate text-[13px] text-body sm:ml-4" title={row.text}>
+                    {row.text}
+                  </span>
                 </div>
               ))}
               {buildTimeline(result, tcResult).length === 0 ? (
