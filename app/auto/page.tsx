@@ -468,29 +468,29 @@ export default function ProAutoPage() {
       // cheaper AI, same quality bar, still unique.
       const styleByDid = new Map<string, string>();
       const activityByDid = new Map<string, number>();
-      for (let i = 0; i < imported.length; i += 20) {
-        const chunk = imported.slice(i, i + 20).map((w) => w.did);
-        try {
-          const res = await fetch(`/api/tc/room-scan?dids=${encodeURIComponent(chunk.join(","))}`, { cache: "no-store" });
-          const data = (await res.json()) as {
-            dids?: Record<string, Record<string, { count: number; latestTs?: string; latestText?: string }>>;
-          };
-          for (const did of chunk) {
-            const rooms = data.dids?.[did] ?? {};
-            let total = 0;
-            let latest: { ts: string; text: string } | null = null;
-            for (const r of Object.values(rooms)) {
-              total += r.count ?? 0;
-              if (r.latestText && r.latestTs && (!latest || r.latestTs > latest.ts)) {
-                latest = { ts: r.latestTs, text: r.latestText };
-              }
+      try {
+        const res = await fetch(
+          `/api/tc/room-scan?dids=${encodeURIComponent(imported.map((w) => w.did).join(","))}`,
+          { cache: "no-store" },
+        );
+        const data = (await res.json()) as {
+          dids?: Record<string, Record<string, { count: number; latestTs?: string; latestText?: string }>>;
+        };
+        for (const w of imported) {
+          const rooms = data.dids?.[w.did] ?? {};
+          let total = 0;
+          let latest: { ts: string; text: string } | null = null;
+          for (const r of Object.values(rooms)) {
+            total += r.count ?? 0;
+            if (r.latestText && r.latestTs && (!latest || r.latestTs > latest.ts)) {
+              latest = { ts: r.latestTs, text: r.latestText };
             }
-            activityByDid.set(did, total);
-            if (latest) styleByDid.set(did, latest.text);
           }
-        } catch {
-          /* voice hint is best-effort */
+          activityByDid.set(w.did, total);
+          if (latest) styleByDid.set(w.did, latest.text);
         }
+      } catch {
+        /* voice hint is best-effort */
       }
 
       imported.forEach((w, i) => {

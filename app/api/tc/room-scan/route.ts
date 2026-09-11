@@ -15,7 +15,8 @@ import { TechnocoreClient } from "@/lib/technocore";
  */
 
 const SCAN_ROOMS = ["lobby", "technocore", "flop-network", "tclk-offers"];
-const MAX_DIDS = 20;
+const MAX_DIDS = 100;
+const RECENT_PER_ROOM = 8;
 
 export const maxDuration = 60;
 
@@ -53,54 +54,61 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     for (const room of SCAN_ROOMS) byDid[d][room] = emptyEntry();
   }
 
-  for (const room of SCAN_ROOMS) {
-    try {
-      const body = await fetchRoomExport(room);
-      let first = 0;
-      let last = 0;
-      let total = 0;
-      for (const line of body.split("\n")) {
-        if (!line.trim()) continue;
-        let m: { seq?: number; ts?: string; from?: string; text?: string };
-        try {
-          m = JSON.parse(line) as typeof m;
-        } catch {
-          continue;
+  // All rooms scan in parallel: the wall time is the slowest single export,
+  // not the sum of four.
+  await Promise.all(
+    SCAN_ROOMS.map(async (room) => {
+      try {
+        const body = await fetchRoomExport(room);
+        let first = 0;
+        let last = 0;
+        let total = 0;
+        for (const line of body.split("\n")) {
+          if (!line.trim()) continue;
+          let m: { seq?: number; ts?: string; from?: string; text?: string };
+          try {
+            m = JSON.parse(line) as typeof m;
+          } catch {
+            continue;
+          }
+          if (typeof m?.from !== "string" || typeof m?.text !== "string") continue;
+          total++;
+          if (typeof m.seq === "number") {
+            if (first === 0 || m.seq < first) first = m.seq;
+            if (m.seq > last) last = m.seq;
+          }
+          const entry = byDid[m.from]?.[room];
+          if (!entry) continue;
+          const msg = {
+            seq: typeof m.seq === "number" ? m.seq : 0,
+            ts: typeof m.ts === "string" ? m.ts : "",
+            text: m.text,
+          };
+          entry.count++;
+          if (msg.seq >= entry.latestSeq) {
+            entry.latestSeq = msg.seq;
+            entry.latestTs = msg.ts;
+            entry.latestText = msg.text;
+          }
+          entry.recent.push(msg);
+          if (entry.recent.length > RECENT_PER_ROOM) entry.recent.shift();
         }
-        if (typeof m?.from !== "string" || typeof m?.text !== "string") continue;
-        total++;
-        if (typeof m.seq === "number") {
-          if (first === 0 || m.seq < first) first = m.seq;
-          if (m.seq > last) last = m.seq;
-        }
-        const entry = byDid[m.from]?.[room];
-        if (!entry) continue;
-        const msg = {
-          seq: typeof m.seq === "number" ? m.seq : 0,
-          ts: typeof m.ts === "string" ? m.ts : "",
-          text: m.text,
-        };
-        entry.count++;
-        if (msg.seq >= entry.latestSeq) {
-          entry.latestSeq = msg.seq;
-          entry.latestTs = msg.ts;
-          entry.latestText = msg.text;
-        }
-        entry.recent.push(msg);
-        if (entry.recent.length > 20) entry.recent.shift();
+        for (const d of dids) byDid[d][room].recent.reverse();
+        rooms[room] = { retainedFirst: first, retainedLast: last, messages: total };
+      } catch (e) {
+        rooms[room] = { retainedFirst: 0, retainedLast: 0, messages: 0, error: (e as Error).message.slice(0, 140) };
       }
-      for (const d of dids) byDid[d][room].recent.reverse();
-      rooms[room] = { retainedFirst: first, retainedLast: last, messages: total };
-    } catch (e) {
-      rooms[room] = { retainedFirst: 0, retainedLast: 0, messages: 0, error: (e as Error).message.slice(0, 140) };
-    }
-  }
+    }),
+  );
 
-  // DID note presence (durable part) — read straight from the public ledger.
+  // DID note presence (durable part) — read straight from the public ledger,
+  // with a small pool so 100 DIDs never flood the venue at once.
   const client = new TechnocoreClient({ mode: "direct" });
   const notes: Record<string, { found: boolean; path: string; value?: string }> = {};
-  await Promise.all(
-    dids.map(async (d) => {
+  let noteCursor = 0;
+  const noteWorker = async () => {
+    while (noteCursor < dids.length) {
+      const d = dids[noteCursor++];
       try {
         const paths = await didNotePaths(d);
         const [sharded, legacy] = await Promise.all([
@@ -117,8 +125,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       } catch {
         notes[d] = { found: false, path: "" };
       }
-    }),
-  );
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(8, dids.length) }, noteWorker));
 
   return NextResponse.json({ ok: true, rooms, dids: byDid, notes });
 }

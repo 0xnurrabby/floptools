@@ -18,7 +18,6 @@ import { readZip } from "@/lib/zip";
  */
 
 const MAX_DIDS = 100;
-const BATCH = 20;
 
 interface RoomScan {
   count: number;
@@ -100,28 +99,27 @@ export default function BulkCheckPage() {
           total: 0,
         });
       }
-      for (let i = 0; i < unique.length; i += BATCH) {
-        const chunk = unique.slice(i, i + BATCH);
-        const res = await fetch(`/api/tc/room-scan?dids=${encodeURIComponent(chunk.join(","))}`, { cache: "no-store" });
-        const data = (await res.json()) as {
-          ok?: boolean;
-          error?: string;
-          rooms?: Record<string, { error?: string }>;
-          dids?: Record<string, Record<string, RoomScan>>;
-          notes?: Record<string, { found: boolean; path: string; value?: string }>;
-        };
-        if (!res.ok || !data.ok) throw new Error(data.error ?? `scan failed (HTTP ${res.status})`);
-        for (const d of chunk) {
-          const entry = results.get(d)!;
-          const rooms = data.dids?.[d] ?? {};
-          entry.rooms = rooms;
-          entry.note = data.notes?.[d] ?? { found: false, path: "" };
-          entry.total = SCAN_ROOMS.reduce((n, room) => n + (rooms[room]?.count ?? 0), 0);
-          const roomErrors = Object.values(data.rooms ?? {})
-            .map((r) => r.error)
-            .filter(Boolean);
-          if (roomErrors.length > 0 && entry.total === 0) entry.error = roomErrors[0];
-        }
+      // One request for the whole set: the server scans each room once and the
+      // export cache serves every DID from that single scan.
+      const res = await fetch(`/api/tc/room-scan?dids=${encodeURIComponent(unique.join(","))}`, { cache: "no-store" });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        rooms?: Record<string, { error?: string }>;
+        dids?: Record<string, Record<string, RoomScan>>;
+        notes?: Record<string, { found: boolean; path: string; value?: string }>;
+      };
+      if (!res.ok || !data.ok) throw new Error(data.error ?? `scan failed (HTTP ${res.status})`);
+      const roomErrors = Object.values(data.rooms ?? {})
+        .map((r) => r.error)
+        .filter(Boolean);
+      for (const d of unique) {
+        const entry = results.get(d)!;
+        const rooms = data.dids?.[d] ?? {};
+        entry.rooms = rooms;
+        entry.note = data.notes?.[d] ?? { found: false, path: "" };
+        entry.total = SCAN_ROOMS.reduce((n, room) => n + (rooms[room]?.count ?? 0), 0);
+        if (roomErrors.length > 0 && entry.total === 0) entry.error = roomErrors[0];
       }
       setScans([...results.values()]);
     } catch (e) {
