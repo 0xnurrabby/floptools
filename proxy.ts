@@ -46,5 +46,6 @@ export const config = {
     "/check/:path*",
     "/deal/:path*",
     "/trustcore/:path*",
+    "/auto/:path*",
   ],
 };
