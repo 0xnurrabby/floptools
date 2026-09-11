@@ -129,32 +129,35 @@ const TILE = {
 
 export default function Home() {
   return (
-    <div className="mx-auto max-w-4xl px-4">
-      {/* Hero */}
-      <section className="relative overflow-hidden pt-16 pb-12 text-center sm:pt-20">
-        <div className="hero-glow left-1/2 top-[-120px] h-72 w-[560px] -translate-x-1/2 bg-brand-500/25" aria-hidden />
-        <div className="hero-glow left-[-80px] top-24 h-56 w-56 bg-rose-500/15" aria-hidden />
-        <div className="hero-glow right-[-60px] top-32 h-52 w-52 bg-violet-600/15" aria-hidden />
-        <h1 className="display-xl relative max-w-xl">
-          One DID. <span className="text-grad">Kept alive.</span>
-        </h1>
-        <p className="body-md relative mt-4 max-w-lg text-body">
-          Create an encrypted did:key in this tab, sign on Technocore,
-          stay active until the Flop testnet.
-        </p>
+    <div>
+      {/* Hero — the glow runs edge to edge, the copy stays in the page column */}
+      <section className="relative overflow-hidden pt-16 pb-12 sm:pt-20">
+        <div className="hero-glow left-1/2 top-[-140px] h-80 w-[95vw] max-w-[1100px] -translate-x-1/2 bg-brand-500/25" aria-hidden />
+        <div className="hero-glow left-[3vw] top-20 h-64 w-64 bg-rose-500/15" aria-hidden />
+        <div className="hero-glow right-[3vw] top-28 h-60 w-60 bg-violet-600/15" aria-hidden />
+        <div className="relative mx-auto max-w-4xl px-4 text-center">
+          <h1 className="display-xl mx-auto max-w-xl">
+            One DID. <span className="text-grad">Kept alive.</span>
+          </h1>
+          <p className="body-md mx-auto mt-4 max-w-lg text-body">
+            Create an encrypted did:key in this tab, sign on Technocore,
+            stay active until the Flop testnet.
+          </p>
 
-        <div className="relative mt-7 flex w-full flex-col items-center gap-3 sm:w-auto sm:flex-row">
-          <LinkButton href="/create" variant="primary" className="w-full sm:w-auto">
-            Create your DID
-          </LinkButton>
-          <LinkButton href="/docs" className="w-full sm:w-auto">How it works</LinkButton>
+          <div className="mx-auto mt-7 flex w-full max-w-md flex-col items-center gap-3 sm:max-w-none sm:w-auto sm:flex-row sm:justify-center">
+            <LinkButton href="/create" variant="primary" className="w-full sm:w-auto">
+              Create your DID
+            </LinkButton>
+            <LinkButton href="/docs" className="w-full sm:w-auto">How it works</LinkButton>
+          </div>
+
+          <p className="caption-sm mt-5 text-mute">
+            Unofficial · not affiliated · keys never leave your device
+          </p>
         </div>
-
-        <p className="caption-sm relative mt-5 text-mute">
-          Unofficial · not affiliated · keys never leave your device
-        </p>
       </section>
 
+      <div className="mx-auto max-w-4xl px-4">
       {/* The 1-2-3 keep-alive flow */}
       <section aria-label="Keep your identity alive" className="mt-2">
         <div className="flex flex-col items-stretch gap-3 lg:flex-row">
@@ -269,6 +272,7 @@ export default function Home() {
           </LinkButton>
         </div>
       </section>
+      </div>
     </div>
   );
 }
