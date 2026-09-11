@@ -139,6 +139,10 @@ export default function ProAutoPage() {
   const [count, setCount] = useState("3");
   const [passphrase, setPassphrase] = useState("");
   const [importOpen, setImportOpen] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importPass, setImportPass] = useState("");
+  const [importBusy, setImportBusy] = useState(false);
+  const [prepared, setPrepared] = useState<WalletRun[] | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [wallets, setWallets] = useState<WalletRun[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -381,15 +385,20 @@ export default function ProAutoPage() {
     }
   };
 
-  const importZip = async (file: File) => {
+  /** Step 1+2: read the ZIP, decrypt locally, check notes — no publishing yet. */
+  const prepareImport = async () => {
     setError(null);
-    if (passphrase.length < MIN_PASSPHRASE_LENGTH) {
-      setError(`Enter the passphrase used for these wallet files (at least ${MIN_PASSPHRASE_LENGTH} characters).`);
+    if (!importFile) {
+      setError("Choose a wallets ZIP first.");
       return;
     }
-    setPhase("generating");
+    if (importPass.length < MIN_PASSPHRASE_LENGTH) {
+      setError(`Enter this ZIP's passphrase (at least ${MIN_PASSPHRASE_LENGTH} characters).`);
+      return;
+    }
+    setImportBusy(true);
     try {
-      const entries = readZip(await file.arrayBuffer());
+      const entries = readZip(await importFile.arrayBuffer());
       const idEntries = entries.filter((e) => /^identity_.*\.json$/i.test(e.name));
       if (idEntries.length === 0) {
         throw new Error("No identity_*.json files found in this ZIP.");
@@ -411,7 +420,7 @@ export default function ProAutoPage() {
         seen.add(parsed.public.did);
         let unlocked;
         try {
-          unlocked = await decryptIdentity(parsed, passphrase);
+          unlocked = await decryptIdentity(parsed, importPass);
         } catch {
           throw new Error(`Could not decrypt "${e.name}" — wrong passphrase?`);
         }
@@ -434,12 +443,22 @@ export default function ProAutoPage() {
         w.noteAlready = notes[i];
         w.tasks = taskList(notes[i]);
       });
-      setWallets(imported);
-      await startRun(imported, true);
+      // Ready to run — the Run button appears; nothing is published yet.
+      setPrepared(imported);
     } catch (e) {
       setError((e as Error).message);
-      setPhase("stopped");
+    } finally {
+      setImportBusy(false);
     }
+  };
+
+  const runImported = async () => {
+    if (!prepared) return;
+    const list = prepared;
+    setPrepared(null);
+    setImportOpen(false);
+    setWallets(list);
+    await startRun(list, true);
   };
 
   const stop = () => {
@@ -535,22 +554,73 @@ export default function ProAutoPage() {
             <div className="mt-4 rounded-[12px] border border-hairline bg-canvas p-4">
               <p className="body-sm-strong text-ink">Import an existing wallets ZIP</p>
               <p className="caption-sm mt-1 text-body">
-                Upload a ZIP produced by this page. Wallets whose DID note is already on the ledger
-                skip that step — only the activity check-ins run (each gets a fresh, unique persona).
+                1 · choose the ZIP · 2 · type that ZIP&apos;s passphrase · 3 · Import, then Run. Wallets
+                whose DID note is already on the ledger skip that step — only the activity check-ins
+                run (each gets a fresh, unique persona).
               </p>
-              <div className="mt-3">
-                <input
-                  type="file"
-                  accept=".zip,application/zip"
-                  disabled={busy}
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) void importZip(f);
-                    e.target.value = "";
-                  }}
-                  className="block w-full cursor-pointer rounded-[10px] border border-hairline bg-surface-card px-3 py-2 text-[13px] text-ink file:mr-3 file:cursor-pointer file:rounded-full file:border-0 file:bg-tint-brand file:px-4 file:py-1.5 file:text-[13px] file:font-medium file:text-brand-700"
-                />
+
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <p className="caption-sm text-mute">Wallets ZIP</p>
+                  <input
+                    type="file"
+                    accept=".zip,application/zip"
+                    disabled={busy || importBusy}
+                    onChange={(e) => {
+                      setImportFile(e.target.files?.[0] ?? null);
+                      setPrepared(null);
+                      setError(null);
+                    }}
+                    className="mt-1 block w-full cursor-pointer rounded-[10px] border border-hairline bg-surface-card px-3 py-2 text-[13px] text-ink file:mr-3 file:cursor-pointer file:rounded-full file:border-0 file:bg-tint-brand file:px-4 file:py-1.5 file:text-[13px] file:font-medium file:text-brand-700"
+                  />
+                </div>
+                <Field label="Passphrase for this ZIP" hint="The passphrase you used when these wallets were generated.">
+                  <TextInput
+                    type="password"
+                    value={importPass}
+                    onChange={(e) => setImportPass(e.target.value)}
+                    placeholder="passphrase for the imported files"
+                    autoComplete="off"
+                    disabled={busy || importBusy}
+                  />
+                </Field>
               </div>
+
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <Button
+                  variant="secondary"
+                  onClick={() => void prepareImport()}
+                  disabled={busy || importBusy || !importFile || !importPass.trim()}
+                >
+                  {importBusy ? <Spinner label="Importing…" /> : "Import"}
+                </Button>
+                {prepared ? (
+                  <Button onClick={() => void runImported()} disabled={busy}>
+                    Run imported wallets
+                  </Button>
+                ) : null}
+              </div>
+
+              {prepared ? (
+                <div className="mt-3 rounded-[10px] border border-leaf-600/25 bg-tint-leaf p-3">
+                  <p className="caption-sm text-ink">
+                    {prepared.length} wallet{prepared.length === 1 ? "" : "s"} imported and ready ·{" "}
+                    {prepared.filter((w) => w.noteAlready).length} DID note
+                    {prepared.filter((w) => w.noteAlready).length === 1 ? "" : "s"} already on the
+                    ledger (skipped) · activity runs for all.
+                  </p>
+                  <div className="mt-2 space-y-1">
+                    {prepared.map((w) => (
+                      <div key={w.did} className="flex flex-wrap items-center justify-between gap-2">
+                        <code className="font-mono text-[12px] text-body">{w.short}</code>
+                        <StatusChip tone={w.noteAlready ? "ok" : "empty"}>
+                          {w.noteAlready ? "note on ledger" : "note will publish"}
+                        </StatusChip>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : null}
 
