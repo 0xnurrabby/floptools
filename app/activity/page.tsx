@@ -113,7 +113,7 @@ export default function ActivityPage() {
     }
   };
 
-  const publishNote = async (opts: { mailbox?: string; force?: boolean }) => {
+  const publishNote = async (opts: { mailbox?: string }) => {
     setNoteResult(null);
     if (!did) return;
     setNoteBusy(true);
@@ -121,10 +121,10 @@ export default function ActivityPage() {
       const paths = await didNotePaths(did);
       const value = didNoteValue(did, { mailbox: opts.mailbox });
       const client = getClient();
-      const attempt = async () =>
-        opts.force
-          ? await client.setNote(paths.sharded.ns, paths.sharded.key, value)
-          : await client.setNote(paths.sharded.ns, paths.sharded.key, value, { ifAbsent: true });
+      // Publish unconditionally: the first write creates the note, later
+      // writes refresh it (same key, same value) and keep it alive. Overwriting
+      // your own DID note is exactly the point — never a conflict error.
+      const attempt = async () => await client.setNote(paths.sharded.ns, paths.sharded.key, value);
 
       let res;
       try {
@@ -142,7 +142,7 @@ export default function ActivityPage() {
         ok: res.status >= 200 && res.status < 300,
         message:
           res.status >= 200 && res.status < 300
-            ? `Published to /kv/${paths.sharded.ns}/${paths.sharded.key}`
+            ? `DID note published at /kv/${paths.sharded.ns}/${paths.sharded.key} — refreshed if it already existed, so it stays alive.`
             : `HTTP ${res.status}: ${res.body.slice(0, 200)}`,
       });
     } catch (e) {
@@ -151,12 +151,6 @@ export default function ActivityPage() {
           ok: false,
           message:
             "technocore.chat did not answer in time (the public service is sometimes slow). Nothing was published. Try again in a few seconds.",
-        });
-      } else if (e instanceof TechnocoreError && e.status === 409) {
-        setNoteResult({
-          ok: false,
-          message: "A note already exists at that path (conflict). It is yours — publish as your key to replace it:",
-          value: e.body.slice(0, 250),
         });
       } else if (e instanceof TechnocoreError) {
         const isErrorJson = e.body.startsWith("{");
@@ -272,7 +266,8 @@ export default function ActivityPage() {
           </div>
         </div>
         <p className="caption-sm mt-3 text-body">
-          Publish the note once (a fresh write every few weeks keeps it alive). Re-open this page anytime to add a mailbox.
+          Publish the note — writing it again refreshes the same record and keeps it alive, so there is
+          never a conflict. Re-open this page anytime to add a mailbox.
         </p>
         {!did ? (
           <div className="mt-4">
@@ -295,7 +290,7 @@ export default function ActivityPage() {
                   onClick={() => publishNote({ mailbox: mailbox && includeMailbox ? mailbox : undefined })}
                   disabled={noteBusy || !did}
                 >
-                  {noteBusy ? "Publishing…" : mailbox ? "Publish note (with mailbox)" : "Publish DID note"}
+                  {noteBusy ? "Publishing…" : mailbox ? "Publish / refresh note (with mailbox)" : "Publish / refresh DID note"}
                 </Button>
                 <Button variant="secondary" onClick={makeMailbox}>Mint mailbox name</Button>
                 {mailbox ? (
@@ -325,14 +320,6 @@ export default function ActivityPage() {
                         }
                       >
                         Try again
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        onClick={() =>
-                          publishNote({ mailbox: mailbox && includeMailbox ? mailbox : undefined, force: true })
-                        }
-                      >
-                        Publish as my key (unconditional)
                       </Button>
                     </div>
                   ) : null}

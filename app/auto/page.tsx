@@ -114,12 +114,12 @@ type Phase = "idle" | "generating" | "personas" | "running" | "stopped" | "finis
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-function taskList(noteAlready: boolean): TaskRun[] {
+function taskList(): TaskRun[] {
   return [
     {
       id: "did-note",
-      label: "Publish DID note",
-      status: noteAlready ? "skipped" : "pending",
+      label: "Publish / refresh DID note",
+      status: "pending",
       attempts: 0,
     },
     ...TEMPLATE_SLOTS.map((slot): TaskRun => ({
@@ -225,10 +225,6 @@ export default function ProAutoPage() {
 
   /** Publish one task, retrying until the ledger accepts (409/422 = already there). */
   const runTask = async (client: ReturnType<typeof getClient>, w: WalletRun, t: TaskRun) => {
-    if (t.id === "did-note" && w.noteAlready) {
-      updateTask(w.did, t.id, { status: "skipped" });
-      return;
-    }
     let attempt = 0;
     for (;;) {
       if (stopRef.current) return;
@@ -239,8 +235,10 @@ export default function ProAutoPage() {
       });
       try {
         if (t.id === "did-note") {
+          // Unconditional: the first write creates the note, every later run
+          // refreshes the same record and keeps the wallet alive. No conflict.
           const { ns, key } = (await didNotePaths(w.did)).sharded;
-          await client.setNote(ns, key, didNoteValue(w.did), { ifAbsent: true });
+          await client.setNote(ns, key, didNoteValue(w.did));
         } else {
           // A missing slot text falls back to a unique built-in line so a
           // persona hiccup can never spin the runner or duplicate a wallet.
@@ -330,7 +328,7 @@ export default function ProAutoPage() {
           templates: useAi ? ({} as Record<TemplateSlot, string>) : builtinFor(short),
           noteAlready: false,
           established: false,
-          tasks: taskList(false),
+          tasks: taskList(),
         };
       },
     );
@@ -499,7 +497,9 @@ export default function ProAutoPage() {
         w.noteAlready = notes[i];
         w.established = notes[i] || (activityByDid.get(w.did) ?? 0) > 0;
         w.styleHint = styleByDid.get(w.did);
-        w.tasks = taskList(notes[i]);
+        // The note task always runs: re-publishing refreshes the record and
+        // keeps the wallet active (no skip, no conflict).
+        w.tasks = taskList();
       });
       // Ready to run — the Run button appears; nothing is published yet.
       setPrepared(imported);
@@ -551,8 +551,8 @@ export default function ProAutoPage() {
       <p className="body-md mt-3 max-w-2xl text-body">
         Generate up to {MAX_WALLETS} fresh did:key identities in this browser (or import an existing
         wallets ZIP), and publish every wallet&apos;s DID note + five check-ins to the public
-        technocore ledger — each wallet with its OWN AI persona, running in parallel, retrying until
-        every task lands.
+        technocore ledger — the note is refreshed on every run to keep the wallet active, each wallet
+        with its OWN AI persona, running in parallel, retrying until every task lands.
       </p>
 
       {preset === "not-pro" ? (
@@ -626,9 +626,9 @@ export default function ProAutoPage() {
             <div className="mt-4 rounded-[12px] border border-hairline bg-canvas p-4">
               <p className="body-sm-strong text-ink">Import an existing wallets ZIP</p>
               <p className="caption-sm mt-1 text-body">
-                1 · choose the ZIP · 2 · type that ZIP&apos;s passphrase · 3 · Import, then Run. Wallets
-                whose DID note is already on the ledger skip that step — only the activity check-ins
-                run (each gets a fresh, unique persona).
+                1 · choose the ZIP · 2 · type that ZIP&apos;s passphrase · 3 · Import, then Run. Every
+                wallet re-publishes its DID note as a refresh (keeping it alive) and runs the five
+                check-ins — established wallets get short, voice-matched top-ups.
               </p>
 
               <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -679,14 +679,14 @@ export default function ProAutoPage() {
                     {prepared.length} wallet{prepared.length === 1 ? "" : "s"} imported and ready ·{" "}
                     {prepared.filter((w) => w.noteAlready).length} DID note
                     {prepared.filter((w) => w.noteAlready).length === 1 ? "" : "s"} already on the
-                    ledger (skipped) · activity runs for all.
+                    ledger (they will be refreshed) · activity runs for all.
                   </p>
                   <div className="mt-2 space-y-1">
                     {prepared.map((w) => (
                       <div key={w.did} className="flex flex-wrap items-center justify-between gap-2">
                         <code className="font-mono text-[12px] text-body">{w.short}</code>
                         <StatusChip tone={w.noteAlready ? "ok" : "empty"}>
-                          {w.noteAlready ? "note on ledger" : "note will publish"}
+                          {w.noteAlready ? "note on ledger (refresh)" : "note will publish"}
                         </StatusChip>
                       </div>
                     ))}
