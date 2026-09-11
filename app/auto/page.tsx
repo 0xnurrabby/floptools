@@ -49,9 +49,10 @@ import { downloadBlob, makeZip, readZip } from "@/lib/zip";
  */
 
 const MAX_WALLETS = 100;
-const WALLET_CONCURRENCY = 10;
-const PERSONA_CONCURRENCY = 3;
+const WALLET_CONCURRENCY = 6;
 const ENCRYPT_CONCURRENCY = 6;
+const PERSONA_ATTEMPTS = 2;
+const PERSONA_TIMEOUT_MS = 25_000;
 const ACCEPTED = new Set([409, 422]); // already on the board
 
 const PERSONA_CYCLE: Persona[] = ["developer", "creator", "tester", "surprise"];
@@ -84,6 +85,12 @@ const needsPersona = (w: WalletRun): boolean => TEMPLATE_SLOTS.some((s) => !w.te
 
 /** Transient failures retry until the cap; permanent ones fail fast. */
 const retryableStatus = (status: number): boolean => status === 0 || status === 429 || status >= 500;
+
+/** Built-in check-in lines, still unique per wallet via its short name. */
+const builtinFor = (short: string): Record<TemplateSlot, string> =>
+  Object.fromEntries(
+    TEMPLATE_SLOTS.map((s) => [s, `${BUILTIN_TEMPLATES[s]} · ${short}`]),
+  ) as Record<TemplateSlot, string>;
 
 interface WalletRun {
   did: string;
@@ -144,6 +151,7 @@ export default function ProAutoPage() {
   const [importPass, setImportPass] = useState("");
   const [importBusy, setImportBusy] = useState(false);
   const [prepared, setPrepared] = useState<WalletRun[] | null>(null);
+  const [useAi, setUseAi] = useState(true);
   const [phase, setPhase] = useState<Phase>("idle");
   const [wallets, setWallets] = useState<WalletRun[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -171,11 +179,8 @@ export default function ProAutoPage() {
     setWallets((prev) => prev.map((w) => (w.did === did ? { ...w, ...patch } : w)));
   }, []);
 
-  /** One AI persona per wallet: unique name + rotating persona + fresh text. */
-  const generatePersona = async (w: WalletRun, index: number) => {
-    const name = `${NAME_BASES[index % NAME_BASES.length]}-${w.did.slice(-4)}`;
-    const persona = PERSONA_CYCLE[index % PERSONA_CYCLE.length];
-    patchWallet(w.did, { name, persona });
+  /** One AI persona per wallet: unique name + persona + fresh text. */
+  const generatePersona = async (w: WalletRun) => {
     let attempt = 0;
     for (;;) {
       if (stopRef.current) return;
@@ -183,7 +188,8 @@ export default function ProAutoPage() {
         const res = await fetch("/api/personalize", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name, persona, did: w.did }),
+          body: JSON.stringify({ name: w.name, persona: w.persona, did: w.did }),
+          signal: AbortSignal.timeout(PERSONA_TIMEOUT_MS),
         });
         const data = (await res.json()) as {
           personaTitle?: string;
@@ -194,16 +200,13 @@ export default function ProAutoPage() {
         return;
       } catch {
         attempt++;
-        if (attempt >= 4) {
-          // Honest fallback: built-in texts, still unique per wallet via its
-          // short name, so no two wallets publish identical lines.
-          const fallback = Object.fromEntries(
-            TEMPLATE_SLOTS.map((s) => [s, `${BUILTIN_TEMPLATES[s]} · ${w.short}`]),
-          ) as Record<TemplateSlot, string>;
-          patchWallet(w.did, { templates: fallback, personaTitle: "built-in" });
+        if (attempt >= PERSONA_ATTEMPTS) {
+          // Fast, honest fallback: unique built-in lines for this wallet, so a
+          // slow AI never blocks the run or duplicates another wallet.
+          patchWallet(w.did, { templates: builtinFor(w.short), personaTitle: "built-in" });
           return;
         }
-        await sleep(Math.min(8000, 1000 * 2 ** attempt));
+        await sleep(1500);
       }
     }
   };
@@ -259,34 +262,28 @@ export default function ProAutoPage() {
     }
   };
 
-  const runWallets = async (list: WalletRun[]) => {
+  /**
+   * One pipeline per wallet: persona first (when needed), then its tasks —
+   * publishing starts as soon as the first persona is ready, so a long run
+   * never sits at 0% while all 100 personas generate.
+   */
+  const startRun = async (list: WalletRun[], imported: boolean) => {
+    setError(null);
+    stopRef.current = false;
+    nonceRef.current = Date.now();
+    setPhase("running");
+
     const client = getClient();
     await runPool(list, WALLET_CONCURRENCY, async (w) => {
+      if (stopRef.current) return;
+      if (needsPersona(w)) await generatePersona(w);
+      if (stopRef.current) return;
       for (const t of w.tasks) {
         if (stopRef.current) return;
         if (t.status === "done" || t.status === "skipped") continue;
         await runTask(client, w, t);
       }
     });
-  };
-
-  const startRun = async (list: WalletRun[], imported: boolean) => {
-    setError(null);
-    stopRef.current = false;
-    nonceRef.current = Date.now();
-
-    const needPersona = list.filter(needsPersona);
-    if (needPersona.length > 0) {
-      setPhase("personas");
-      await runPool(needPersona, PERSONA_CONCURRENCY, (w) => generatePersona(w, list.indexOf(w)));
-    }
-    if (stopRef.current) {
-      setPhase("stopped");
-      return;
-    }
-
-    setPhase("running");
-    await runWallets(list);
 
     const doneNow = stopRef.current ? "stopped" : "finished";
     setPhase(doneNow);
@@ -310,14 +307,15 @@ export default function ProAutoPage() {
         const publicKey = publicKeyFromSeed(seed);
         const did = didFromPublicKey(publicKey);
         const file = await encryptIdentity(seed, did, publicKey, passphrase);
+        const short = identityShortName(did);
         slots[i] = {
           did,
-          short: identityShortName(did),
+          short,
           seed,
           file,
           name: `${NAME_BASES[i % NAME_BASES.length]}-${did.slice(-4)}`,
           persona: PERSONA_CYCLE[i % PERSONA_CYCLE.length],
-          templates: {} as Record<TemplateSlot, string>,
+          templates: useAi ? ({} as Record<TemplateSlot, string>) : builtinFor(short),
           noteAlready: false,
           tasks: taskList(false),
         };
@@ -433,14 +431,15 @@ export default function ProAutoPage() {
         } catch {
           throw new Error(`Could not decrypt "${e.name}" — wrong passphrase?`);
         }
+        const short = identityShortName(unlocked.did);
         imported.push({
           did: unlocked.did,
-          short: identityShortName(unlocked.did),
+          short,
           seed: unlocked.seed,
           file: parsed,
-          name: identityShortName(unlocked.did),
+          name: short,
           persona: PERSONA_CYCLE[imported.length % PERSONA_CYCLE.length],
-          templates: {} as Record<TemplateSlot, string>,
+          templates: useAi ? ({} as Record<TemplateSlot, string>) : builtinFor(short),
           noteAlready: false,
           tasks: [],
         });
@@ -543,6 +542,20 @@ export default function ProAutoPage() {
               />
             </Field>
           </div>
+          <label className="mt-4 flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={useAi}
+              onChange={(e) => setUseAi(e.target.checked)}
+              disabled={busy}
+              className="mt-0.5 h-4 w-4 rounded-sm accent-ink"
+            />
+            <span className="text-body">
+              Use AI personas — one unique generated persona per wallet. Uncheck for instant
+              built-in unique lines (much faster on large batches like 100).
+            </span>
+          </label>
+
           <div className="mt-4 flex flex-wrap items-center gap-2">
             <Button onClick={() => void startGenerate()} disabled={busy}>
               {phase === "generating" ? <Spinner label="Generating…" /> : "Create & run"}
@@ -669,6 +682,8 @@ export default function ProAutoPage() {
                       {w.short}
                       {w.personaTitle ? (
                         <span className="ml-2 caption-sm font-normal text-body">· {w.personaTitle} ({w.persona})</span>
+                      ) : needsPersona(w) ? (
+                        <span className="ml-2 caption-sm font-normal text-mute">· persona…</span>
                       ) : null}
                     </p>
                     <p className="break-all font-mono text-[12px] text-mute">{w.did}</p>
