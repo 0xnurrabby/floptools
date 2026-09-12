@@ -230,7 +230,7 @@ function Timeline({ voters, span, signals }: { voters: Voter[]; span: Report["sp
       });
     };
     return (
-      <div className="relative" onPointerMove={move} onPointerDown={move} onPointerLeave={() => setTip(null)}>
+      <div className="relative touch-pan-y" onPointerMove={move} onPointerDown={move} onPointerLeave={() => setTip(null)}>
         <svg viewBox={`0 0 ${W} ${padTop + dotsH + padBottom}`} className="h-auto w-full text-ink" role="img" aria-label="Vote timeline">
           {axis.map((t, i) => (
             <line key={i} x1={x(t)} y1={padTop} x2={x(t)} y2={padTop + dotsH} stroke="currentColor" strokeOpacity="0.08" />
@@ -309,7 +309,7 @@ function Timeline({ voters, span, signals }: { voters: Voter[]; span: Report["sp
   };
 
   return (
-    <div className="relative" onPointerMove={move} onPointerDown={move} onPointerLeave={() => setTip(null)}>
+    <div className="relative touch-pan-y" onPointerMove={move} onPointerDown={move} onPointerLeave={() => setTip(null)}>
       <svg viewBox={`0 0 ${W} ${padTop + plotH + padBottom}`} className="h-auto w-full text-ink" role="img" aria-label="Vote timeline">
         <defs>
           <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
