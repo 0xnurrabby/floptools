@@ -68,13 +68,13 @@ export default async function Image({ params }: { params: Promise<{ entryId: str
             f
           </div>
           <div style={{ display: "flex", flexDirection: "column" }}>
-            <div style={{ fontSize: 26, fontWeight: 700, color: "#0b0b0f" }}>floptools · sonnet-2</div>
-            <div style={{ fontSize: 20, color: "#52525b" }}>voters &amp; rug report</div>
+            <div style={{ display: "flex", fontSize: 26, fontWeight: 700, color: "#0b0b0f" }}>floptools · sonnet-2</div>
+            <div style={{ display: "flex", fontSize: 20, color: "#52525b" }}>voters &amp; rug report</div>
           </div>
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          <div style={{ fontSize: 66, fontWeight: 800, color: "#0b0b0f", letterSpacing: -1 }}>
+          <div style={{ display: "flex", fontSize: 66, fontWeight: 800, color: "#0b0b0f", letterSpacing: -1 }}>
             {data.gameId ?? entryId}
           </div>
           <div style={{ display: "flex", gap: 24 }}>
@@ -88,8 +88,8 @@ export default async function Image({ params }: { params: Promise<{ entryId: str
                 padding: "18px 30px",
               }}
             >
-              <div style={{ fontSize: 20, color: "#71717a" }}>counted voters</div>
-              <div style={{ fontSize: 46, fontWeight: 800, color: "#0b0b0f" }}>{data.votes ?? 0}</div>
+              <div style={{ display: "flex", fontSize: 20, color: "#71717a" }}>counted voters</div>
+              <div style={{ display: "flex", fontSize: 46, fontWeight: 800, color: "#0b0b0f" }}>{data.votes ?? 0}</div>
             </div>
             <div
               style={{
@@ -101,15 +101,15 @@ export default async function Image({ params }: { params: Promise<{ entryId: str
                 padding: "18px 30px",
               }}
             >
-              <div style={{ fontSize: 20, color: "#71717a" }}>coordination risk</div>
-              <div style={{ fontSize: 46, fontWeight: 800, color }}>
-                {risk?.score ?? 0}/100 · {risk?.level ?? "low"}
+              <div style={{ display: "flex", fontSize: 20, color: "#71717a" }}>coordination risk</div>
+              <div style={{ display: "flex", fontSize: 46, fontWeight: 800, color }}>
+                {`${risk?.score ?? 0}/100 · ${risk?.level ?? "low"}`}
               </div>
             </div>
           </div>
           {signals.map((s, i) => (
             <div key={i} style={{ display: "flex", fontSize: 24, color: "#3f3f46" }}>
-              • {s.label}
+              {`• ${s.label}`}
             </div>
           ))}
         </div>
