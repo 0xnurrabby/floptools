@@ -1,9 +1,27 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
 import { Note, Spinner, StatusChip } from "@/components/ui";
 import { LocalTime } from "@/components/local-time";
+
+interface RegEvent {
+  seq: number;
+  ts: string;
+  role: string;
+  requestId: string;
+  receipt: "accepted" | "rejected" | "pending";
+  reason: string | null;
+}
+
+interface BallotEvent {
+  entryId: string;
+  seq: number;
+  ts: string;
+  requestId: string;
+  status: "accepted" | "rejected" | "pending";
+  reason: string | null;
+}
 
 interface Voter {
   did: string;
@@ -21,6 +39,8 @@ interface Voter {
   regToVoteMs: number | null;
   tag: string;
   flags: string[];
+  registrations: RegEvent[];
+  ballots: BallotEvent[];
 }
 
 interface Signal {
@@ -35,8 +55,10 @@ interface Report {
   ok: boolean;
   entryId: string;
   gameId: string | null;
+  poemRoom: string | null;
   votes: number;
   voters: Voter[];
+  words: { word: string; by: string; version: number; ts?: string }[];
   signals: Signal[];
   risk: { score: number; level: "low" | "notable" | "high"; summary: string };
   span: { startMs: number; endMs: number };
@@ -49,6 +71,62 @@ function msGap(ms: number | null): string {
   const m = Math.round(ms / 60_000);
   if (m < 120) return `${m}m`;
   return `${Math.round(m / 60)}h`;
+}
+
+/** Chronological ledger activity for one voter DID. */
+function ActivityTimeline({ voter, entryId }: { voter: Voter; entryId: string }) {
+  const events = [
+    ...voter.registrations.map((r) => ({ kind: "register" as const, seq: r.seq, ts: r.ts, reg: r })),
+    ...voter.ballots.map((b) => ({ kind: "ballot" as const, seq: b.seq, ts: b.ts, ballot: b })),
+  ].sort((a, b) => a.seq - b.seq);
+  if (events.length === 0) {
+    return (
+      <p className="caption-sm text-mute">
+        No registration or ballot events retained for this DID in the current rooms.
+      </p>
+    );
+  }
+  return (
+    <ol className="space-y-1.5">
+      {events.map((e, i) => (
+        <li key={i} className="flex flex-wrap items-center gap-2">
+          <span className="caption-sm w-[128px] shrink-0 font-mono text-mute">
+            <LocalTime value={e.ts} timeStyle="medium" />
+          </span>
+          {e.kind === "register" ? (
+            <>
+              <StatusChip
+                tone={e.reg.receipt === "accepted" ? "ok" : e.reg.receipt === "rejected" ? "error" : "empty"}
+              >
+                registration
+              </StatusChip>
+              <span className="caption-sm text-body">
+                role <span className="font-mono">{e.reg.role}</span> · receipt {e.reg.receipt}
+                {e.reg.reason ? <span className="text-rose-600"> · {e.reg.reason}</span> : null}
+              </span>
+            </>
+          ) : (
+            <>
+              <StatusChip
+                tone={e.ballot.status === "accepted" ? "ok" : e.ballot.status === "rejected" ? "error" : "empty"}
+              >
+                ballot
+              </StatusChip>
+              <span className={`caption-sm ${e.ballot.entryId === entryId ? "font-semibold text-ink" : "text-body"}`}>
+                entry <span className="font-mono">{e.ballot.entryId}</span>
+                {e.ballot.entryId === entryId ? " · this entry" : ""}
+              </span>
+              <span className="caption-sm text-mute">
+                {e.ballot.status}
+                {e.ballot.reason ? ` · ${e.ballot.reason}` : ""}
+              </span>
+            </>
+          )}
+          <span className="caption-sm ml-auto font-mono text-mute">seq {e.seq}</span>
+        </li>
+      ))}
+    </ol>
+  );
 }
 
 const FLAG_LABEL: Record<string, string> = {
@@ -143,6 +221,15 @@ export function SonnetVoterReport({
 }) {
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  const toggle = (did: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(did)) next.delete(did);
+      else next.add(did);
+      return next;
+    });
 
   useEffect(() => {
     let cancelled = false;
@@ -266,6 +353,41 @@ export function SonnetVoterReport({
               </div>
             )}
 
+            {/* poem activity */}
+            {report.words.length > 0 ? (
+              <div className="rounded-[14px] border border-hairline bg-surface-card p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="body-sm-strong text-ink">Poem activity — who wrote what, when</p>
+                  <span className="caption-sm text-mute">
+                    {report.words.length} accepted words · {report.poemRoom}
+                  </span>
+                </div>
+                <div className="mt-2 max-h-64 space-y-1 overflow-y-auto pr-1">
+                  {report.words.map((w, i) => (
+                    <div
+                      key={`${w.version}-${i}`}
+                      className="flex flex-wrap items-center gap-2 rounded-[8px] border border-hairline bg-canvas px-2.5 py-1 text-[12px]"
+                    >
+                      <span className="w-8 shrink-0 font-mono text-[11px] text-mute">v{w.version}</span>
+                      <Link
+                        href={`/trustcore/${encodeURIComponent(w.by)}`}
+                        className="w-[86px] shrink-0 font-mono text-[11px] text-body hover:text-brand-700"
+                        title={w.by}
+                      >
+                        …{w.by.slice(-6)}
+                      </Link>
+                      <span className="font-mono font-medium text-ink">{w.word}</span>
+                      {w.ts ? (
+                        <span className="caption-sm ml-auto text-mute">
+                          <LocalTime value={w.ts} timeStyle="medium" />
+                        </span>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
             {/* voters table */}
             <div className="rounded-[14px] border border-hairline">
               <div className="overflow-x-auto">
@@ -288,8 +410,17 @@ export function SonnetVoterReport({
                       </tr>
                     ) : (
                       report.voters.map((v) => (
-                        <tr key={v.did} className="border-b border-hairline last:border-0">
+                        <Fragment key={v.did}>
+                        <tr className="border-b border-hairline last:border-0">
                           <td className="px-3 py-2">
+                            <button
+                              type="button"
+                              onClick={() => toggle(v.did)}
+                              className="mr-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full border border-hairline bg-canvas text-[10px] text-body hover:bg-surface-soft"
+                              aria-label={expanded.has(v.did) ? "Hide activity" : "Show full activity"}
+                            >
+                              {expanded.has(v.did) ? "−" : "+"}
+                            </button>
                             <Link
                               href={`/trustcore/${encodeURIComponent(v.did)}`}
                               className="font-mono text-ink underline decoration-hairline-strong underline-offset-2 hover:text-brand-700"
@@ -338,6 +469,17 @@ export function SonnetVoterReport({
                             </span>
                           </td>
                         </tr>
+                        {expanded.has(v.did) ? (
+                          <tr className="border-b border-hairline bg-canvas/70">
+                            <td colSpan={7} className="px-3 py-3">
+                              <p className="caption-sm font-medium text-ink">Full activity · identity_{v.did.slice(-4)}</p>
+                              <div className="mt-2">
+                                <ActivityTimeline voter={v} entryId={entryId} />
+                              </div>
+                            </td>
+                          </tr>
+                        ) : null}
+                        </Fragment>
                       ))
                     )}
                   </tbody>

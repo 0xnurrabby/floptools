@@ -132,8 +132,8 @@ export interface SonnetTeam {
   poemRoom: string;
   roomGeneration: number | null;
   members: SonnetMember[];
-  /** Accepted words in order (version 1..n). */
-  words: { word: string; by: string; version: number }[];
+  /** Accepted words in order (version 1..n), with the contributor's submit time. */
+  words: { word: string; by: string; version: number; ts?: string }[];
   /** Canonical poem lines reconstructed with the frozen dictionary. */
   lines: string[];
   complete: boolean;
@@ -562,6 +562,24 @@ export async function refreshRegistration(): Promise<void> {
 
 /* ---------------- voter report (who voted, and rug signals) ---------------- */
 
+export interface VoterRegEvent {
+  seq: number;
+  ts: string;
+  role: string;
+  requestId: string;
+  receipt: "accepted" | "rejected" | "pending";
+  reason: string | null;
+}
+
+export interface VoterBallotEvent {
+  entryId: string;
+  seq: number;
+  ts: string;
+  requestId: string;
+  status: "accepted" | "rejected" | "pending";
+  reason: string | null;
+}
+
 export interface VoterReportVoter {
   did: string;
   ballotSeq: number;
@@ -578,6 +596,10 @@ export interface VoterReportVoter {
   regToVoteMs: number | null;
   tag: string;
   flags: string[];
+  /** Every registration this DID signed, oldest first. */
+  registrations: VoterRegEvent[];
+  /** Every ballot this DID signed, oldest first. */
+  ballots: VoterBallotEvent[];
 }
 
 export interface VoterReportSignal {
@@ -591,8 +613,11 @@ export interface VoterReportSignal {
 export interface VoterReport {
   entryId: string;
   gameId: string | null;
+  poemRoom: string | null;
   votes: number;
   voters: VoterReportVoter[];
+  /** The poem's accepted words with their contributor and submit time. */
+  words: { word: string; by: string; version: number; ts?: string }[];
   signals: VoterReportSignal[];
   risk: { score: number; level: "low" | "notable" | "high"; summary: string };
   span: { startMs: number; endMs: number };
@@ -661,6 +686,48 @@ export async function entryVoterReport(entryId: string): Promise<VoterReport> {
     }
   }
 
+  // Full per-DID activity: every registration and every ballot, with receipt.
+  const regsByDid = new Map<string, VoterRegEvent[]>();
+  for (const m of regMessages) {
+    const o = json(m.text);
+    if (!o || str(o.type) !== "sonnet.register.v1") continue;
+    const requestId = str(o.request_id);
+    const role = str(o.role);
+    if (!requestId || !role) continue;
+    const rr = regReceipts.find((x) => x.requestId === requestId && x.senderDid === m.from);
+    const list = regsByDid.get(m.from) ?? [];
+    list.push({
+      seq: m.seq,
+      ts: m.ts,
+      role,
+      requestId,
+      receipt: rr ? (rr.reason ? "rejected" : "accepted") : "pending",
+      reason: rr?.reason ?? null,
+    });
+    regsByDid.set(m.from, list);
+  }
+  const ballotsByDid = new Map<string, VoterBallotEvent[]>();
+  for (const m of voteMessages) {
+    const o = json(m.text);
+    if (!o || str(o.type) !== "sonnet.ballot.v1") continue;
+    const entryId = str(o.entry_id);
+    const requestId = str(o.request_id);
+    if (!entryId || !requestId) continue;
+    const rr = parseReceipts(voteMessages).find((x) => x.requestId === requestId && x.senderDid === m.from);
+    const list = ballotsByDid.get(m.from) ?? [];
+    list.push({
+      entryId,
+      seq: m.seq,
+      ts: m.ts,
+      requestId,
+      status: rr ? (rr.reason ? "rejected" : "accepted") : "pending",
+      reason: rr?.reason ?? null,
+    });
+    ballotsByDid.set(m.from, list);
+  }
+  for (const list of regsByDid.values()) list.sort((a, b) => a.seq - b.seq);
+  for (const list of ballotsByDid.values()) list.sort((a, b) => a.seq - b.seq);
+
   const voters: VoterReportVoter[] = mine.map(([did, b]) => {
     const reg = regByDid.get(did) ?? null;
     const rr = reg ? regReceipts.find((x) => x.requestId === reg.requestId && x.senderDid === did) : undefined;
@@ -683,6 +750,8 @@ export async function entryVoterReport(entryId: string): Promise<VoterReport> {
         Number.isFinite(voteMs) && Number.isFinite(regMs) && voteMs >= regMs ? voteMs - regMs : null,
       tag: requestTag(b.requestId),
       flags: [],
+      registrations: regsByDid.get(did) ?? [],
+      ballots: ballotsByDid.get(did) ?? [],
     };
   });
 
@@ -831,8 +900,10 @@ export async function entryVoterReport(entryId: string): Promise<VoterReport> {
   const report: VoterReport = {
     entryId,
     gameId: team?.gameId ?? null,
+    poemRoom: team?.poemRoom ?? null,
     votes: voters.length,
     voters: voters.slice().sort((a, b) => Date.parse(a.voteAt ?? a.ballotTs) - Date.parse(b.voteAt ?? b.ballotTs)),
+    words: (team?.words ?? []).map((w) => ({ word: w.word, by: w.by, version: w.version, ts: w.ts })),
     signals,
     risk: { score, level, summary },
     span,
@@ -1090,15 +1161,15 @@ async function buildOverview(): Promise<SonnetOverview> {
         const team = toLoad[cursor++];
         try {
           const roomMessages = await readSonnetRoom(team.poemRoom).catch(() => [] as SonnetMessage[]);
-          const proposals = new Map<string, { word: string; by: string }>();
+          const proposals = new Map<string, { word: string; by: string; ts: string }>();
           for (const m of roomMessages) {
             const o = json(m.text);
             if (!o || str(o.type) !== "sonnet.word.v1") continue;
             const requestId = str(o.request_id);
             const word = str(o.word);
-            if (requestId && word) proposals.set(requestId, { word, by: m.from });
+            if (requestId && word) proposals.set(requestId, { word, by: m.from, ts: m.ts });
           }
-          const accepted: { word: string; by: string; version: number }[] = [];
+          const accepted: { word: string; by: string; version: number; ts?: string }[] = [];
           let complete = false;
           for (const m of roomMessages) {
             if (m.from !== SONNET.referee) continue;
@@ -1108,7 +1179,7 @@ async function buildOverview(): Promise<SonnetOverview> {
             const requestId = str(o.request_id);
             const p = proposals.get(requestId);
             const version = typeof o.version === "number" ? o.version : accepted.length + 1;
-            if (p) accepted.push({ word: p.word, by: p.by, version });
+            if (p) accepted.push({ word: p.word, by: p.by, version, ts: p.ts });
             if (o.complete === true) complete = true;
           }
           accepted.sort((a, b) => a.version - b.version);
