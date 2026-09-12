@@ -362,7 +362,7 @@ async function ingestWriters(): Promise<WriterRefreshInfo> {
           return `($${j * 3 + 1},$${j * 3 + 2},$${j * 3 + 3})`;
         });
         await safeExec(
-          `INSERT INTO sonnet_writers (did, role, x_account, updated_at)
+          `INSERT INTO sonnet_writers (did, role, x_account)
            VALUES ${placeholders.join(",")}
            ON CONFLICT (did) DO UPDATE SET role = EXCLUDED.role, x_account = EXCLUDED.x_account, updated_at = now()`,
           values,
