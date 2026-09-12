@@ -292,7 +292,9 @@ export default function SonnetVotePage() {
                           {m.x.replace(/^https?:\/\/(www\.)?(x|twitter)\.com\//, "@")}
                         </a>
                       ) : (
-                        <span className="text-mute">no X declared</span>
+                        <span className="text-mute" title="Not in the currently retained registrations — it may have rotated out of the room ring.">
+                          X unknown
+                        </span>
                       )}
                       <span className="text-mute">{m.words} word{m.words === 1 ? "" : "s"}</span>
                     </span>
