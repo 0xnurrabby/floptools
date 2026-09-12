@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { Button, Card, Note, Spinner, StatusChip } from "@/components/ui";
 import { LocalTime } from "@/components/local-time";
+import { SonnetVoterReport } from "@/components/sonnet-voter-report";
 
 interface Member {
   did: string;
@@ -36,6 +37,7 @@ export default function TopSonnetPage() {
   const [data, setData] = useState<Overview | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reportTarget, setReportTarget] = useState<Team | null>(null);
 
   const load = useCallback((fresh = false) => {
     return Promise.resolve()
@@ -143,6 +145,9 @@ export default function TopSonnetPage() {
                 >
                   See the poem & vote
                 </Link>
+                <Button variant="secondary" onClick={() => setReportTarget(t)}>
+                  Voters & rug report
+                </Button>
                 <code className="font-mono text-[11px] text-mute">entry {t.entryId}</code>
               </div>
             </Card>
@@ -176,6 +181,15 @@ export default function TopSonnetPage() {
         the referee has receipted with an entry id are counted, and a later ballot replaces an earlier
         one. Eligibility review can still change the shortlist after the deadline.
       </Note>
+
+      {reportTarget?.entryId ? (
+        <SonnetVoterReport
+          entryId={reportTarget.entryId}
+          gameId={reportTarget.gameId}
+          votes={reportTarget.votes}
+          onClose={() => setReportTarget(null)}
+        />
+      ) : null}
     </div>
   );
 }

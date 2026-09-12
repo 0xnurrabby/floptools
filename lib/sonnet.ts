@@ -560,6 +560,288 @@ export async function refreshRegistration(): Promise<void> {
   void ingestWriters();
 }
 
+/* ---------------- voter report (who voted, and rug signals) ---------------- */
+
+export interface VoterReportVoter {
+  did: string;
+  ballotSeq: number;
+  ballotTs: string;
+  ballotRequestId: string;
+  voteAt: string | null;
+  intakeSeq: number | null;
+  regSeq: number | null;
+  regTs: string | null;
+  regRequestId: string | null;
+  regRole: string | null;
+  regReceipt: "accepted" | "rejected" | "pending" | null;
+  regReceiptAt: string | null;
+  regToVoteMs: number | null;
+  tag: string;
+  flags: string[];
+}
+
+export interface VoterReportSignal {
+  kind: string;
+  severity: "high" | "medium" | "info";
+  label: string;
+  detail: string;
+  dids: string[];
+}
+
+export interface VoterReport {
+  entryId: string;
+  gameId: string | null;
+  votes: number;
+  voters: VoterReportVoter[];
+  signals: VoterReportSignal[];
+  risk: { score: number; level: "low" | "notable" | "high"; summary: string };
+  span: { startMs: number; endMs: number };
+  generatedAt: string;
+}
+
+/** The meaningful part of a request id: producer tag before the first number. */
+function requestTag(requestId: string): string {
+  const parts = requestId.split(/[-_.]/);
+  const keep: string[] = [];
+  for (const p of parts) {
+    if (!p) continue;
+    if (/^\d+$/.test(p) || /^[0-9a-f]{8,}$/i.test(p) || p.length > 16) break;
+    keep.push(p.toLowerCase());
+    if (keep.length >= 3) break;
+  }
+  return keep.join("-");
+}
+
+const voterReportCache = new Map<string, { at: number; report: VoterReport }>();
+const VOTER_REPORT_TTL_MS = 60_000;
+
+export async function entryVoterReport(entryId: string): Promise<VoterReport> {
+  const hit = voterReportCache.get(entryId);
+  if (hit && Date.now() - hit.at < VOTER_REPORT_TTL_MS) return hit.report;
+
+  const [voteMessages, regMessages, overview] = await Promise.all([
+    readSonnetRoom(SONNET.rooms.votes).catch(() => [] as SonnetMessage[]),
+    readSonnetRoom(SONNET.rooms.registration).catch(() => [] as SonnetMessage[]),
+    loadSonnetOverview().catch(() => null),
+  ]);
+
+  // Effective ballots for this entry: each voter's LAST accepted ballot.
+  const accepted = new Map<string, { entryId: string; requestId: string; seq: number; ts: string; intakeSeq: number | null; voteAt: string | null }>();
+  for (const r of parseReceipts(voteMessages)) {
+    if (!r.entryId || r.reason !== "" || !r.senderDid) continue;
+    const prev = accepted.get(r.senderDid);
+    const order = r.intakeSeq ?? 0;
+    if (prev && order < (prev.intakeSeq ?? 0)) continue;
+    const proposal = voteMessages.find(
+      (m) => m.from === r.senderDid && str(json(m.text)?.request_id) === r.requestId,
+    );
+    accepted.set(r.senderDid, {
+      entryId: r.entryId,
+      requestId: r.requestId,
+      seq: proposal?.seq ?? 0,
+      ts: proposal?.ts ?? "",
+      intakeSeq: r.intakeSeq ?? null,
+      voteAt: r.receivedAt ? new Date(r.receivedAt * 1000).toISOString() : (proposal?.ts ?? null),
+    });
+  }
+  const mine = [...accepted.entries()].filter(([, b]) => b.entryId === entryId);
+
+  // Registrations (latest per DID) + their referee receipts.
+  const regReceipts = parseReceipts(regMessages);
+  const regByDid = new Map<string, { seq: number; ts: string; requestId: string; role: string }>();
+  for (const m of regMessages) {
+    const o = json(m.text);
+    if (!o || str(o.type) !== "sonnet.register.v1") continue;
+    const requestId = str(o.request_id);
+    const role = str(o.role);
+    if (!requestId || !role) continue;
+    const prev = regByDid.get(m.from);
+    if (!prev || m.seq >= prev.seq) {
+      regByDid.set(m.from, { seq: m.seq, ts: m.ts, requestId, role });
+    }
+  }
+
+  const voters: VoterReportVoter[] = mine.map(([did, b]) => {
+    const reg = regByDid.get(did) ?? null;
+    const rr = reg ? regReceipts.find((x) => x.requestId === reg.requestId && x.senderDid === did) : undefined;
+    const voteMs = b.voteAt ? Date.parse(b.voteAt) : NaN;
+    const regMs = reg?.ts ? Date.parse(reg.ts) : NaN;
+    return {
+      did,
+      ballotSeq: b.seq,
+      ballotTs: b.ts,
+      ballotRequestId: b.requestId,
+      voteAt: b.voteAt,
+      intakeSeq: b.intakeSeq,
+      regSeq: reg?.seq ?? null,
+      regTs: reg?.ts ?? null,
+      regRequestId: reg?.requestId ?? null,
+      regRole: reg?.role ?? null,
+      regReceipt: reg ? (rr ? (rr.reason ? "rejected" : "accepted") : "pending") : null,
+      regReceiptAt: rr?.receivedAt ? new Date(rr.receivedAt * 1000).toISOString() : null,
+      regToVoteMs:
+        Number.isFinite(voteMs) && Number.isFinite(regMs) && voteMs >= regMs ? voteMs - regMs : null,
+      tag: requestTag(b.requestId),
+      flags: [],
+    };
+  });
+
+  const signals: VoterReportSignal[] = [];
+
+  // 1) Votes that landed inside a tight window.
+  const byTime = voters
+    .filter((v) => v.voteAt)
+    .slice()
+    .sort((a, b) => Date.parse(a.voteAt!) - Date.parse(b.voteAt!));
+  const clusters: VoterReportVoter[][] = [];
+  let current: VoterReportVoter[] = [];
+  for (const v of byTime) {
+    if (current.length === 0) {
+      current = [v];
+      continue;
+    }
+    const gap = Date.parse(v.voteAt!) - Date.parse(current[current.length - 1]!.voteAt!);
+    if (gap <= 120_000) {
+      current.push(v);
+    } else {
+      if (current.length >= 2) clusters.push(current);
+      current = [v];
+    }
+  }
+  if (current.length >= 2) clusters.push(current);
+  const tight = clusters.filter((c) => c.length >= 3);
+  for (const c of tight) {
+    const start = Date.parse(c[0]!.voteAt!);
+    const end = Date.parse(c[c.length - 1]!.voteAt!);
+    const secs = Math.round((end - start) / 1000);
+    const dids = c.map((v) => v.did);
+    for (const v of c) v.flags.push("vote-cluster");
+    signals.push({
+      kind: "vote-cluster",
+      severity: c.length >= 5 || secs <= 30 ? "high" : "medium",
+      label: `${c.length} votes within ${secs}s`,
+      detail: `Ballots for this entry were receipted inside a ${secs}-second window (${c.length} voters). Honest campaigns can also land together, but a tight burst is the classic pattern of one operator fanning out.`,
+      dids,
+    });
+  }
+
+  // 2) Shared request-id tags (same producer signature).
+  const byTag = new Map<string, VoterReportVoter[]>();
+  for (const v of voters) {
+    if (!v.tag || v.tag.length < 4) continue;
+    const list = byTag.get(v.tag) ?? [];
+    list.push(v);
+    byTag.set(v.tag, list);
+  }
+  for (const [tag, group] of byTag) {
+    if (group.length < 2) continue;
+    for (const v of group) v.flags.push("same-tag");
+    signals.push({
+      kind: "same-tag",
+      severity: group.length >= 4 ? "high" : "medium",
+      label: `${group.length} ballots share the request tag "${tag}"`,
+      detail:
+        "The request id is chosen by the voter's tool. Several different DIDs using the same tag strongly suggests one operator or one script prepared all of them.",
+      dids: group.map((v) => v.did),
+    });
+  }
+
+  // 3) Registrations in the same burst (adjacent seqs / same window).
+  const byReg = voters
+    .filter((v) => v.regSeq !== null && v.regTs)
+    .slice()
+    .sort((a, b) => (a.regSeq ?? 0) - (b.regSeq ?? 0));
+  const regGroups: VoterReportVoter[][] = [];
+  let regCur: VoterReportVoter[] = [];
+  for (const v of byReg) {
+    if (regCur.length === 0) {
+      regCur = [v];
+      continue;
+    }
+    const prevV = regCur[regCur.length - 1]!;
+    const seqGap = (v.regSeq ?? 0) - (prevV.regSeq ?? 0);
+    const timeGap = Date.parse(v.regTs!) - Date.parse(prevV.regTs!);
+    if (seqGap <= 5 || timeGap <= 120_000) {
+      regCur.push(v);
+    } else {
+      if (regCur.length >= 2) regGroups.push(regCur);
+      regCur = [v];
+    }
+  }
+  if (regCur.length >= 2) regGroups.push(regCur);
+  for (const g of regGroups.filter((x) => x.length >= 3)) {
+    for (const v of g) v.flags.push("reg-burst");
+    signals.push({
+      kind: "reg-burst",
+      severity: g.length >= 5 ? "high" : "medium",
+      label: `${g.length} voter DIDs registered back-to-back`,
+      detail:
+        "These identities were registered within a few ledger slots of each other — the fingerprint of wallets being created in one batch.",
+      dids: g.map((v) => v.did),
+    });
+  }
+
+  // 4) Rushed onboarding: registered minutes before voting.
+  const fresh = voters.filter((v) => v.regToVoteMs !== null && v.regToVoteMs <= 15 * 60_000);
+  if (fresh.length >= 2) {
+    for (const v of fresh) v.flags.push("fresh-did");
+    const shortest = Math.round(Math.min(...fresh.map((v) => v.regToVoteMs!)) / 60_000);
+    signals.push({
+      kind: "fresh-did",
+      severity: fresh.length >= 4 ? "medium" : "info",
+      label: `${fresh.length} DIDs voted within 15 min of registering`,
+      detail: `The fastest gap was about ${shortest || 1} minute(s). A genuine supporter can be quick, but many rushed DIDs together usually mean one operator.`,
+      dids: fresh.map((v) => v.did),
+    });
+  }
+
+  const clusterMax = tight.reduce((n, c) => Math.max(n, c.length), 0);
+  const tagMax = [...byTag.values()].reduce((n, g) => Math.max(n, g.length), 0);
+  const regMax = regGroups.reduce((n, g) => Math.max(n, g.length), 0);
+  let score = 0;
+  if (tagMax >= 2) score += Math.min(40, (tagMax - 1) * 15);
+  if (clusterMax >= 3) score += Math.min(30, (clusterMax - 2) * 10);
+  if (regMax >= 3) score += Math.min(18, (regMax - 2) * 6);
+  score += Math.min(20, fresh.length * 5);
+  score = Math.max(0, Math.min(100, score));
+  const level = score >= 50 ? "high" : score >= 20 ? "notable" : "low";
+  const summary =
+    level === "low"
+      ? voters.length === 0
+        ? "No counted voters yet."
+        : `${voters.length} counted voter${voters.length === 1 ? "" : "s"} — no meaningful clustering detected in their registration or vote timing.`
+      : [
+          tagMax >= 2 ? `${tagMax} ballots share one request tag` : null,
+          clusterMax >= 3 ? `${clusterMax} votes landed inside a tight window` : null,
+          regMax >= 3 ? `${regMax} DIDs registered back-to-back` : null,
+          fresh.length >= 2 ? `${fresh.length} voted within 15 min of registering` : null,
+        ]
+          .filter(Boolean)
+          .join("; ")
+          .replace(/^./, (c) => c.toUpperCase()) +
+        ". Treat this as a signal to inspect, not proof — the referee decides conduct cases.";
+
+  const times = voters.map((v) => Date.parse(v.voteAt ?? v.ballotTs)).filter((n) => Number.isFinite(n));
+  const span = {
+    startMs: times.length ? Math.min(...times) : Date.now(),
+    endMs: times.length ? Math.max(...times) : Date.now(),
+  };
+
+  const team = overview?.teams.find((t) => t.entryId === entryId) ?? null;
+  const report: VoterReport = {
+    entryId,
+    gameId: team?.gameId ?? null,
+    votes: voters.length,
+    voters: voters.slice().sort((a, b) => Date.parse(a.voteAt ?? a.ballotTs) - Date.parse(b.voteAt ?? b.ballotTs)),
+    signals,
+    risk: { score, level, summary },
+    span,
+    generatedAt: new Date().toISOString(),
+  };
+  voterReportCache.set(entryId, { at: Date.now(), report });
+  return report;
+}
+
 /* ---------------- the aggregate ---------------- */
 
 let overviewCache: { at: number; data: SonnetOverview } | null = null;
