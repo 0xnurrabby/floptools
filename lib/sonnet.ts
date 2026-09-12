@@ -539,15 +539,27 @@ async function writeDbSnapshot(data: SonnetOverview): Promise<void> {
 
 function rebuildSnapshot(): Promise<SonnetOverview> {
   if (overviewInflight) return overviewInflight;
-  overviewInflight = buildOverview()
-    .then(async (data) => {
-      overviewCache = { at: Date.now(), data };
-      await writeDbSnapshot(data);
-      return data;
-    })
-    .finally(() => {
-      overviewInflight = null;
-    });
+  overviewInflight = (async () => {
+    const previous = overviewCache?.data ?? (await readDbSnapshot().catch(() => null))?.data ?? null;
+    const data = await buildOverview();
+    // A room read can fail transiently; never let a reduced snapshot replace a
+    // more complete one (the next cycle retries).
+    const degraded =
+      previous !== null &&
+      (data.teams.length === 0 ||
+        (data.totals.entries === 0 && previous.totals.entries > 0) ||
+        data.totals.entries < Math.floor(previous.totals.entries / 2) ||
+        data.teams.length < Math.floor(previous.teams.length / 2));
+    if (degraded && previous) {
+      overviewCache = { at: Date.now(), data: previous };
+      return previous;
+    }
+    overviewCache = { at: Date.now(), data };
+    await writeDbSnapshot(data);
+    return data;
+  })().finally(() => {
+    overviewInflight = null;
+  });
   return overviewInflight;
 }
 
