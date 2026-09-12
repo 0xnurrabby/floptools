@@ -260,12 +260,22 @@ export default function SonnetVotePage() {
                 )}
                 {myVote ? (
                   <span className="caption-sm text-body">
-                    currently voting for <span className="font-mono">{myVote.entryId}</span> ·{" "}
-                    {myVote.status === "accepted"
-                      ? "accepted by the referee"
-                      : myVote.status === "rejected"
-                        ? `refused (${myVote.reason ?? "?"})`
-                        : "waiting for the referee receipt"}
+                    {myVote.status === "accepted" ? (
+                      <>
+                        currently voting for <span className="font-mono">{myVote.entryId}</span> ·
+                        accepted by the referee
+                      </>
+                    ) : myVote.status === "rejected" ? (
+                      <>
+                        last ballot for <span className="font-mono">{myVote.entryId}</span> was refused
+                        {myVote.reason ? ` (${myVote.reason})` : ""} · vote again to make it count
+                      </>
+                    ) : (
+                      <>
+                        ballot for <span className="font-mono">{myVote.entryId}</span> posted · awaiting
+                        the referee receipt
+                      </>
+                    )}
                   </span>
                 ) : (
                   <span className="caption-sm text-mute">no ballot cast yet</span>

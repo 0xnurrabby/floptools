@@ -290,15 +290,23 @@ export function SonnetVoteDialog({
                   <div className="rounded-[12px] border border-leaf-600/25 bg-tint-leaf p-4">
                     <p className="body-sm-strong text-ink">Your current ballot</p>
                     <p className="caption-sm mt-1 text-body">
-                      <span className="font-mono">{me.ballot.entryId}</span> ·{" "}
-                      {me.ballot.status === "accepted"
-                        ? "accepted by the referee"
-                        : me.ballot.status === "rejected"
-                          ? `refused (${me.ballot.reason ?? "?"})`
-                          : "waiting for the referee receipt"}
-                      {me.entry ? (
-                        <> · currently rank #{me.entry.rank} of {me.entry.entries} with {me.entry.votes} votes</>
-                      ) : null}
+                      {me.ballot.status === "accepted" ? (
+                        <>
+                          <span className="font-mono">{me.ballot.entryId}</span> · accepted by the referee
+                          {me.entry ? <> · rank #{me.entry.rank} of {me.entry.entries} with {me.entry.votes} votes</> : null}
+                        </>
+                      ) : me.ballot.status === "rejected" ? (
+                        <>
+                          <span className="font-mono">{me.ballot.entryId}</span> · last ballot was refused
+                          {me.ballot.reason ? ` (${me.ballot.reason})` : ""} — cast a new one to make it
+                          count
+                        </>
+                      ) : (
+                        <>
+                          <span className="font-mono">{me.ballot.entryId}</span> · posted, awaiting the
+                          referee receipt
+                        </>
+                      )}
                     </p>
                     <p className="caption-sm mt-1 text-mute">
                       Casting a new ballot replaces it — your last valid ballot counts.
