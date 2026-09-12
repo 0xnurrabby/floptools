@@ -159,6 +159,22 @@ export async function ensureSchema(): Promise<void> {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `);
+    // Every registration message (public), so reports never re-scan the huge
+    // registration room — the ingest keeps this table up to date instead.
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS sonnet_registrations (
+        did TEXT NOT NULL,
+        seq BIGINT NOT NULL,
+        ts TEXT,
+        role TEXT,
+        request_id TEXT,
+        receipt TEXT,
+        reason TEXT,
+        receipt_at TEXT,
+        PRIMARY KEY (did, seq)
+      )
+    `);
+    await p.query(`CREATE INDEX IF NOT EXISTS idx_sonnet_reg_did ON sonnet_registrations (did)`);
     // Sonnet-2 aggregate snapshot: pages load instantly from here while a
     // stale snapshot rebuilds in the background.
     await p.query(`
