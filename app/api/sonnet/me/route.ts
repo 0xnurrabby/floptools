@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isValidDid } from "@/lib/didkey";
-import { mySonnetStatus } from "@/lib/sonnet";
+import { mySonnetStatus, refreshWriters } from "@/lib/sonnet";
 
 /**
  * GET /api/sonnet/me?did=… — the connected identity's own sonnet-2 status:
@@ -16,6 +16,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "invalid did:key" }, { status: 400 });
   }
   try {
+    // ?refresh=1 forces a registration-index rebuild (a just-posted voter
+    // registration must appear immediately, not on the next 15-minute cycle).
+    if (req.nextUrl.searchParams.get("refresh") === "1") {
+      await refreshWriters({ fresh: true });
+    }
     const status = await mySonnetStatus(did);
     return NextResponse.json({ ok: true, ...status });
   } catch (e) {

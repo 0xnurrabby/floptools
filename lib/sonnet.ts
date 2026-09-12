@@ -337,12 +337,14 @@ export interface WriterRefreshInfo {
 let writerIngest: Promise<WriterRefreshInfo> | null = null;
 
 /** Parse registrations into did -> role/x. Runs in the background, bounded. */
-async function ingestWriters(): Promise<WriterRefreshInfo> {
+async function ingestWriters(fresh = false): Promise<WriterRefreshInfo> {
   if (writerIngest) return writerIngest;
   writerIngest = (async (): Promise<WriterRefreshInfo> => {
     const info: WriterRefreshInfo = { parsed: 0, inserted: 0 };
     try {
-      const messages = await readSonnetRoom(SONNET.rooms.registration);
+      // A just-posted registration must be visible immediately, so an explicit
+      // refresh bypasses the room snapshot cache.
+      const messages = await readSonnetRoom(SONNET.rooms.registration, { fresh });
       const rows: { did: string; role: string; x: string | null }[] = [];
       const seen = new Set<string>();
       for (const m of messages) {
@@ -385,9 +387,9 @@ async function ingestWriters(): Promise<WriterRefreshInfo> {
   return writerIngest;
 }
 
-/** Await a writer-index refresh (used by an explicit ?writers=1 request). */
-export async function refreshWriters(): Promise<WriterRefreshInfo> {
-  return ingestWriters();
+/** Await a writer-index refresh (used by explicit ?writers=1 / ?refresh=1). */
+export async function refreshWriters(opts: { fresh?: boolean } = {}): Promise<WriterRefreshInfo> {
+  return ingestWriters(opts.fresh === true);
 }
 
 export interface MyBallot {

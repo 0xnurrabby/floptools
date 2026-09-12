@@ -104,11 +104,15 @@ export function SonnetVoteDialog({
     };
   }, []);
 
-  const fetchMe = useCallback(async (): Promise<MeStatus | null> => {
-    if (!did) return null;
-    setMeBusy(true);
-    try {
-      const res = await fetch(`/api/sonnet/me?did=${encodeURIComponent(did)}`, { cache: "no-store" });
+  const fetchMe = useCallback(
+    async (refresh = false): Promise<MeStatus | null> => {
+      if (!did) return null;
+      setMeBusy(true);
+      try {
+        const res = await fetch(
+          `/api/sonnet/me?did=${encodeURIComponent(did)}${refresh ? "&refresh=1" : ""}`,
+          { cache: "no-store" },
+        );
       const data = (await res.json()) as ({ ok: boolean } & MeStatus) | { ok: false };
       if (!data.ok) return null;
       if (!alive.current) return null;
@@ -157,11 +161,14 @@ export function SonnetVoteDialog({
         text: draft.sweptText,
       });
       if (res.status >= 200 && res.status < 300) {
+        setRegMsg({ ok: true, text: "Registration posted — rebuilding the registry to confirm…" });
+        // Force the registry rebuild so the just-posted registration shows up
+        // here immediately (not on the next 15-minute cycle).
+        await fetchMe(true);
         setRegMsg({
           ok: true,
-          text: "Voter registration posted. The referee receipts it shortly — your status refreshes in a few seconds. (Only verified pre-start identities are counted.)",
+          text: "Registration is on the ledger. The referee receipts it shortly, and only verified pre-start identities are counted for voting.",
         });
-        setTimeout(() => void fetchMe(), 6000);
       } else {
         setRegMsg({ ok: false, text: `Refused (HTTP ${res.status}). ${res.body.slice(0, 160)}` });
       }
@@ -262,6 +269,26 @@ export function SonnetVoteDialog({
                     deadline is the one that counts.
                   </p>
                 </div>
+
+                {me?.ballot ? (
+                  <div className="rounded-[12px] border border-leaf-600/25 bg-tint-leaf p-4">
+                    <p className="body-sm-strong text-ink">Your current ballot</p>
+                    <p className="caption-sm mt-1 text-body">
+                      <span className="font-mono">{me.ballot.entryId}</span> ·{" "}
+                      {me.ballot.status === "accepted"
+                        ? "accepted by the referee"
+                        : me.ballot.status === "rejected"
+                          ? `refused (${me.ballot.reason ?? "?"})`
+                          : "waiting for the referee receipt"}
+                      {me.entry ? (
+                        <> · currently rank #{me.entry.rank} of {me.entry.entries} with {me.entry.votes} votes</>
+                      ) : null}
+                    </p>
+                    <p className="caption-sm mt-1 text-mute">
+                      Casting a new ballot replaces it — your last valid ballot counts.
+                    </p>
+                  </div>
+                ) : null}
 
                 {role !== "voter" && !meBusy ? (
                   <div className="rounded-[12px] border border-hairline bg-surface-card p-4">

@@ -6,6 +6,21 @@ import { Button, Card, Note, Spinner, StatusChip, TextInput } from "@/components
 import { LocalTime } from "@/components/local-time";
 import { useSession } from "@/components/use-session";
 import { SonnetVoteDialog } from "@/components/sonnet-vote-dialog";
+import { signDraft } from "@/lib/keyring";
+import { getClient } from "@/lib/client";
+
+const REGISTRATION_ROOM = "mb-sonnet-2-registration";
+const CONTEST_ID = "sonnet-2";
+
+interface MyStatus {
+  registered: { role: string; x: string | null } | null;
+  ballot: { entryId: string; status: "accepted" | "rejected" | "pending"; reason: string | null } | null;
+  entry: { gameId: string; entryId: string; votes: number; rank: number; entries: number } | null;
+}
+
+function nowMs(): number {
+  return Date.now();
+}
 
 interface Member {
   did: string;
@@ -55,6 +70,9 @@ export default function SonnetVotePage() {
   const [query, setQuery] = useState("");
   const [voteTarget, setVoteTarget] = useState<Team | null>(null);
   const [handlesLoading, setHandlesLoading] = useState(false);
+  const [myStatus, setMyStatus] = useState<MyStatus | null>(null);
+  const [regBusy, setRegBusy] = useState(false);
+  const [regMsg, setRegMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   const load = useCallback((fresh = false) => {
     return Promise.resolve()
@@ -75,6 +93,67 @@ export default function SonnetVotePage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const loadMe = useCallback(
+    (refresh = false) => {
+      return Promise.resolve().then(() => {
+        if (!did) {
+          setMyStatus(null);
+          return;
+        }
+        return fetch(`/api/sonnet/me?did=${encodeURIComponent(did)}${refresh ? "&refresh=1" : ""}`, { cache: "no-store" })
+          .then((r) => r.json() as Promise<MyStatus & { ok?: boolean }>)
+          .then((d) => {
+            if (d.ok !== false) setMyStatus(d);
+          })
+          .catch(() => {});
+      });
+    },
+    [did],
+  );
+
+  useEffect(() => {
+    void loadMe();
+  }, [loadMe]);
+
+  const registerAsVoter = async () => {
+    if (!did || regBusy) return;
+    setRegBusy(true);
+    setRegMsg(null);
+    try {
+      const requestId = `floptools-voter-${did.slice(-6)}-${nowMs()}`;
+      const text = JSON.stringify({
+        type: "sonnet.register.v1",
+        contest_id: CONTEST_ID,
+        role: "voter",
+        request_id: requestId,
+      });
+      const draft = signDraft(REGISTRATION_ROOM, text);
+      const res = await getClient().writeSigned({
+        room: REGISTRATION_ROOM,
+        did: draft.did,
+        sig: draft.sig,
+        nonce: draft.nonce,
+        text: draft.sweptText,
+      });
+      if (res.status < 200 || res.status >= 300) {
+        setRegMsg({ ok: false, text: `Refused (HTTP ${res.status}). ${res.body.slice(0, 160)}` });
+        return;
+      }
+      setRegMsg({ ok: true, text: "Registration posted — rebuilding the registry to confirm…" });
+      // Force the registry to include the just-posted registration, then show
+      // the confirmed role. (The referee receipt may land a moment later.)
+      await loadMe(true);
+      setRegMsg({ ok: true, text: "Registration is on the ledger. Only verified pre-start identities are counted for voting." });
+    } catch (e) {
+      setRegMsg({ ok: false, text: (e as Error).message });
+    } finally {
+      setRegBusy(false);
+    }
+  };
+
+  const role = myStatus?.registered?.role ?? null;
+  const myVote = myStatus?.ballot ?? null;
 
   // If the local writer index is empty (fresh deployment / DB), ask the server
   // to build it in the background and merge the declared X accounts when done.
@@ -152,6 +231,60 @@ export default function SonnetVotePage() {
         </div>
       </div>
 
+      {did ? (
+        <Card className="mt-5">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="body-sm-strong text-ink">Your voter status · identity_{did.slice(-4)}</p>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                {role === "voter" ? (
+                  <StatusChip tone="ok">registered voter · ready to vote</StatusChip>
+                ) : role ? (
+                  <StatusChip tone="warn">registered {role} · cannot vote</StatusChip>
+                ) : (
+                  <StatusChip tone="empty">not registered yet</StatusChip>
+                )}
+                {myVote ? (
+                  <span className="caption-sm text-body">
+                    currently voting for <span className="font-mono">{myVote.entryId}</span> ·{" "}
+                    {myVote.status === "accepted"
+                      ? "accepted by the referee"
+                      : myVote.status === "rejected"
+                        ? `refused (${myVote.reason ?? "?"})`
+                        : "waiting for the referee receipt"}
+                  </span>
+                ) : (
+                  <span className="caption-sm text-mute">no ballot cast yet</span>
+                )}
+              </div>
+            </div>
+            {role !== "voter" ? (
+              <Button onClick={() => void registerAsVoter()} disabled={regBusy} className="shrink-0">
+                {regBusy ? <Spinner label="…" /> : "Register as a voter"}
+              </Button>
+            ) : null}
+          </div>
+          {myVote ? (
+            <p className="caption-sm mt-2 text-body">
+              You can change your vote any time before the deadline — your{" "}
+              <strong className="font-medium text-ink">last</strong> valid ballot counts and replaces
+              the earlier one.
+            </p>
+          ) : null}
+          {regMsg ? (
+            <div className="mt-2">
+              <Note tone={regMsg.ok ? "ok" : "error"}>{regMsg.text}</Note>
+            </div>
+          ) : null}
+        </Card>
+      ) : (
+        <div className="mt-5">
+          <Note tone="warn">
+            Unlock an identity to vote — your ballot must be signed by your own DID (Create page).
+          </Note>
+        </div>
+      )}
+
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <TextInput
           value={query}
@@ -220,6 +353,7 @@ export default function SonnetVotePage() {
                   </p>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
+                  {myVote?.entryId === t.entryId ? <StatusChip tone="ok">your vote</StatusChip> : null}
                   {t.eligibility === "pending" ? <StatusChip tone="empty">review pending</StatusChip> : null}
                   {t.entryId ? (
                     <span className="text-right">
@@ -344,7 +478,10 @@ export default function SonnetVotePage() {
           totalEntries={entries.length}
           did={did}
           onClose={() => setVoteTarget(null)}
-          onVoted={() => void load(true)}
+          onVoted={() => {
+            void load(true);
+            void loadMe();
+          }}
         />
       ) : null}
     </div>
