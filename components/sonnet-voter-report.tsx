@@ -2,7 +2,7 @@
 
 import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
-import { Note, Spinner, StatusChip } from "@/components/ui";
+import { CopyButton, Note, Spinner, StatusChip } from "@/components/ui";
 import { LocalTime } from "@/components/local-time";
 
 interface RegEvent {
@@ -52,7 +52,7 @@ interface Signal {
 }
 
 interface Report {
-  ok: boolean;
+  ok?: boolean;
   entryId: string;
   gameId: string | null;
   poemRoom: string | null;
@@ -219,9 +219,38 @@ export function SonnetVoterReport({
   votes: number;
   onClose: () => void;
 }) {
-  const [report, setReport] = useState<Report | null>(null);
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-ink/40 p-4" onClick={onClose}>
+      <div
+        className="max-h-[88vh] w-full max-w-3xl overflow-y-auto rounded-[18px] border border-hairline bg-canvas p-5 shadow-lg sm:p-6"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <SonnetReportBody entryId={entryId} gameId={gameId} votes={votes} onClose={onClose} />
+      </div>
+    </div>
+  );
+}
+
+/** The report itself — used by the dialog and the standalone /sonnet/report page. */
+export function SonnetReportBody({
+  entryId,
+  gameId,
+  votes,
+  initial = null,
+  shareUrl,
+  onClose,
+}: {
+  entryId: string;
+  gameId: string | null;
+  votes: number;
+  initial?: Report | null;
+  shareUrl?: string;
+  onClose?: () => void;
+}) {
+  const [report, setReport] = useState<Report | null>(initial);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [url, setUrl] = useState(shareUrl ?? "");
 
   const toggle = (did: string) =>
     setExpanded((prev) => {
@@ -232,6 +261,14 @@ export function SonnetVoterReport({
     });
 
   useEffect(() => {
+    if (shareUrl) return;
+    void Promise.resolve().then(() => {
+      setUrl(`${window.location.origin}/sonnet/report/${encodeURIComponent(entryId)}`);
+    });
+  }, [entryId, shareUrl]);
+
+  useEffect(() => {
+    if (initial) return;
     let cancelled = false;
     void fetch(`/api/sonnet/entry-votes?entryId=${encodeURIComponent(entryId)}`, { cache: "no-store" })
       .then((r) => r.json() as Promise<Report>)
@@ -246,17 +283,16 @@ export function SonnetVoterReport({
     return () => {
       cancelled = true;
     };
-  }, [entryId]);
+  }, [entryId, initial]);
 
   const risk = report?.risk;
   const riskTone = risk?.level === "high" ? "error" : risk?.level === "notable" ? "warn" : "ok";
+  const shareText = report
+    ? `Sonnet-2 ${gameId ?? entryId}: ${report.votes} voter${report.votes === 1 ? "" : "s"}, coordination risk ${report.risk.score}/100 (${report.risk.level})`
+    : `Sonnet-2 voters & rug report — ${gameId ?? entryId}`;
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-ink/40 p-4" onClick={onClose}>
-      <div
-        className="max-h-[88vh] w-full max-w-3xl overflow-y-auto rounded-[18px] border border-hairline bg-canvas p-5 shadow-lg sm:p-6"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="min-w-0">
             <p className="caption-sm text-mute">voters & rug report</p>
@@ -265,15 +301,36 @@ export function SonnetVoterReport({
               <span className="text-mute">· entry {entryId}</span>
             </h2>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <StatusChip tone="ok">{votes} vote{votes === 1 ? "" : "s"}</StatusChip>
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-full border border-hairline bg-canvas px-3 py-1 text-[12px] text-body hover:bg-surface-soft"
-            >
-              Close
-            </button>
+            {url ? <CopyButton value={url} label="Copy report link" /> : null}
+            {url ? (
+              <a
+                href={url}
+                className="body-sm rounded-full border border-hairline bg-canvas px-3.5 py-2 text-ink transition-colors hover:bg-surface-soft"
+              >
+                Open page ↗
+              </a>
+            ) : null}
+            {url && report ? (
+              <a
+                href={`https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(url)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="body-sm rounded-full border border-hairline-strong bg-canvas px-4 py-2 text-ink transition-colors hover:bg-surface-soft"
+              >
+                Share on X ↗
+              </a>
+            ) : null}
+            {onClose ? (
+              <button
+                type="button"
+                onClick={onClose}
+                className="rounded-full border border-hairline bg-canvas px-3 py-1 text-[12px] text-body hover:bg-surface-soft"
+              >
+                Close
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -496,7 +553,6 @@ export function SonnetVoterReport({
             </Note>
           </div>
         ) : null}
-      </div>
-    </div>
+    </>
   );
 }
