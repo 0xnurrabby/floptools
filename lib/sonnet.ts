@@ -322,12 +322,19 @@ async function writersFresh(): Promise<boolean> {
   return Date.now() - at < 15 * 60_000;
 }
 
-let writerIngest: Promise<void> | null = null;
+export interface WriterRefreshInfo {
+  parsed: number;
+  inserted: number;
+  error?: string;
+}
+
+let writerIngest: Promise<WriterRefreshInfo> | null = null;
 
 /** Parse registrations into did -> role/x. Runs in the background, bounded. */
-async function ingestWriters(): Promise<void> {
+async function ingestWriters(): Promise<WriterRefreshInfo> {
   if (writerIngest) return writerIngest;
-  writerIngest = (async () => {
+  writerIngest = (async (): Promise<WriterRefreshInfo> => {
+    const info: WriterRefreshInfo = { parsed: 0, inserted: 0 };
     try {
       const messages = await readSonnetRoom(SONNET.rooms.registration);
       const rows: { did: string; role: string; x: string | null }[] = [];
@@ -346,6 +353,7 @@ async function ingestWriters(): Promise<void> {
           x: role === "writer" ? str(o.x_account_url) || null : null,
         });
       }
+      info.parsed = rows.length;
       for (let i = 0; i < rows.length; i += 200) {
         const chunk = rows.slice(i, i + 200);
         const values: unknown[] = [];
@@ -359,10 +367,12 @@ async function ingestWriters(): Promise<void> {
            ON CONFLICT (did) DO UPDATE SET role = EXCLUDED.role, x_account = EXCLUDED.x_account, updated_at = now()`,
           values,
         );
+        info.inserted += chunk.length;
       }
-    } catch {
-      /* keep whatever is in the DB */
+    } catch (e) {
+      info.error = (e as Error).message.slice(0, 200);
     }
+    return info;
   })().finally(() => {
     writerIngest = null;
   });
@@ -370,8 +380,8 @@ async function ingestWriters(): Promise<void> {
 }
 
 /** Await a writer-index refresh (used by an explicit ?writers=1 request). */
-export async function refreshWriters(): Promise<void> {
-  await ingestWriters();
+export async function refreshWriters(): Promise<WriterRefreshInfo> {
+  return ingestWriters();
 }
 
 /* ---------------- the aggregate ---------------- */

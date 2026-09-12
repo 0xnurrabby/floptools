@@ -15,9 +15,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   // called once in the background by the vote page when handles are missing.
   const withWriters = req.nextUrl.searchParams.get("writers") === "1";
   try {
-    if (withWriters) await refreshWriters();
+    let writersRefresh: Awaited<ReturnType<typeof refreshWriters>> | undefined;
+    if (withWriters) writersRefresh = await refreshWriters();
     const data = await loadSonnetOverview({ fresh: fresh || withWriters });
-    return NextResponse.json({ ok: true, ...data });
+    return NextResponse.json({ ok: true, ...data, ...(writersRefresh ? { writersRefresh } : {}) });
   } catch (e) {
     const cached = sonnetOverviewCached();
     if (cached) return NextResponse.json({ ok: true, stale: true, ...cached });
