@@ -149,6 +149,16 @@ export async function ensureSchema(): Promise<void> {
     `);
     await p.query(`CREATE INDEX IF NOT EXISTS idx_pro_events_created ON pro_events (created_at)`);
     await p.query(`CREATE INDEX IF NOT EXISTS idx_pro_events_ip ON pro_events (ip)`);
+    // Sonnet-2 writer registrations (public data) so pages can show each
+    // writer's declared X account without rescanning the huge room each time.
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS sonnet_writers (
+        did TEXT PRIMARY KEY,
+        role TEXT,
+        x_account TEXT,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
     await p.query(`
       CREATE TABLE IF NOT EXISTS ip_geo (
         ip TEXT PRIMARY KEY,
