@@ -198,6 +198,32 @@ export async function ensureSchema(): Promise<void> {
         PRIMARY KEY (room, seq)
       )
     `);
+    // Parsed ballots and their referee receipts: the hot path for reports and
+    // personal status, so no 9 MB raw votes read is needed.
+    await run(`
+      CREATE TABLE IF NOT EXISTS sonnet_ballots (
+        seq BIGINT PRIMARY KEY,
+        ts TEXT,
+        did TEXT NOT NULL,
+        entry_id TEXT,
+        request_id TEXT
+      )
+    `);
+    await run(`CREATE INDEX IF NOT EXISTS idx_sonnet_ballots_did ON sonnet_ballots (did)`);
+    await run(`CREATE INDEX IF NOT EXISTS idx_sonnet_ballots_request ON sonnet_ballots (request_id)`);
+    await run(`
+      CREATE TABLE IF NOT EXISTS sonnet_ballot_receipts (
+        request_id TEXT NOT NULL,
+        sender_did TEXT NOT NULL,
+        entry_id TEXT,
+        reason TEXT,
+        intake_seq BIGINT,
+        received_at DOUBLE PRECISION,
+        PRIMARY KEY (request_id, sender_did)
+      )
+    `);
+    await run(`CREATE INDEX IF NOT EXISTS idx_sonnet_receipt_entry ON sonnet_ballot_receipts (entry_id)`);
+    await run(`CREATE INDEX IF NOT EXISTS idx_sonnet_receipt_sender ON sonnet_ballot_receipts (sender_did)`);
     // Sonnet-2 aggregate snapshot: pages load instantly from here while a
     // stale snapshot rebuilds in the background.
     await run(`

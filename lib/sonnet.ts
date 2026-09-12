@@ -10,7 +10,7 @@
  * Protocol reference: github.com/flop-labs/technocore-sonnet-challenge
  */
 
-import { safeExec, safeQuery } from "./db";
+import { safeExec, safeQuery, type Row } from "./db";
 import { fetchRoomExport } from "./room-export";
 import { TechnocoreClient } from "./technocore";
 
@@ -369,6 +369,7 @@ export async function ingestBoards(opts: { fresh?: boolean } = {}): Promise<void
         try {
           const messages = await readSonnetRoom(room, { fresh: opts.fresh });
           await persistSonnetMessages(room, messages);
+          if (room === SONNET.rooms.votes) await persistBallots(messages);
         } catch {
           /* keep what the DB has */
         }
@@ -378,6 +379,197 @@ export async function ingestBoards(opts: { fresh?: boolean } = {}): Promise<void
     boardIngest = null;
   });
   return boardIngest;
+}
+
+/** Parse the votes room into ballots + receipts (hot-path tables). */
+async function persistBallots(messages: SonnetMessage[]): Promise<void> {
+  const ballots: { seq: number; ts: string; did: string; entryId: string; requestId: string }[] = [];
+  for (const m of messages) {
+    const o = json(m.text);
+    if (!o || str(o.type) !== "sonnet.ballot.v1") continue;
+    const entryId = str(o.entry_id);
+    const requestId = str(o.request_id);
+    if (!entryId || !requestId) continue;
+    ballots.push({ seq: m.seq, ts: m.ts, did: m.from, entryId, requestId });
+  }
+  const receipts = parseReceipts(messages).filter((r) => r.senderDid !== "");
+  for (let i = 0; i < ballots.length; i += 200) {
+    const chunk = ballots.slice(i, i + 200);
+    const values: unknown[] = [];
+    const ph = chunk.map((b, j) => {
+      values.push(b.seq, b.ts, b.did, b.entryId, b.requestId);
+      const k = j * 5;
+      return `($${k + 1},$${k + 2},$${k + 3},$${k + 4},$${k + 5})`;
+    });
+    await safeExec(
+      `INSERT INTO sonnet_ballots (seq, ts, did, entry_id, request_id)
+       VALUES ${ph.join(",")} ON CONFLICT (seq) DO NOTHING`,
+      values,
+    );
+  }
+  for (let i = 0; i < receipts.length; i += 200) {
+    const chunk = receipts.slice(i, i + 200);
+    const values: unknown[] = [];
+    const ph = chunk.map((r, j) => {
+      values.push(r.requestId, r.senderDid, r.entryId ?? null, r.reason, r.intakeSeq ?? null, r.receivedAt ?? null);
+      const k = j * 6;
+      return `($${k + 1},$${k + 2},$${k + 3},$${k + 4},$${k + 5},$${k + 6})`;
+    });
+    await safeExec(
+      `INSERT INTO sonnet_ballot_receipts (request_id, sender_did, entry_id, reason, intake_seq, received_at)
+       VALUES ${ph.join(",")}
+       ON CONFLICT (request_id, sender_did) DO UPDATE SET entry_id = EXCLUDED.entry_id, reason = EXCLUDED.reason,
+         intake_seq = EXCLUDED.intake_seq, received_at = EXCLUDED.received_at`,
+      values,
+    );
+  }
+}
+
+export interface StoredBallot {
+  seq: number;
+  ts: string;
+  entryId: string;
+  requestId: string;
+  status: "accepted" | "rejected" | "pending";
+  reason: string | null;
+  receiptAt: string | null;
+  intakeSeq: number | null;
+}
+
+/** Every ballot this DID signed (oldest first) with its receipt. */
+export async function ballotsForDid(did: string): Promise<StoredBallot[]> {
+  const [ballotRows, receiptRows] = await Promise.all([
+    safeQuery(`SELECT seq, ts, entry_id, request_id FROM sonnet_ballots WHERE did = $1 ORDER BY seq ASC`, [did]),
+    safeQuery(
+      `SELECT request_id, reason, intake_seq, received_at FROM sonnet_ballot_receipts WHERE sender_did = $1`,
+      [did],
+    ),
+  ]);
+  const byReq = new Map<string, Row>();
+  for (const r of receiptRows ?? []) byReq.set(String(r["request_id"] ?? ""), r);
+  const out: StoredBallot[] = [];
+  for (const b of ballotRows ?? []) {
+    const requestId = String(b["request_id"] ?? "");
+    const r = byReq.get(requestId);
+    const reason = r ? String(r["reason"] ?? "") : null;
+    out.push({
+      seq: Number(b["seq"] ?? 0),
+      ts: String(b["ts"] ?? ""),
+      entryId: String(b["entry_id"] ?? ""),
+      requestId,
+      status: r ? (reason ? "rejected" : "accepted") : "pending",
+      reason: reason || null,
+      receiptAt:
+        r && r["received_at"] !== null && r["received_at"] !== undefined
+          ? new Date(Number(r["received_at"]) * 1000).toISOString()
+          : null,
+      intakeSeq: r && r["intake_seq"] !== null && r["intake_seq"] !== undefined ? Number(r["intake_seq"]) : null,
+    });
+  }
+  return out;
+}
+
+/** Ballot histories for a set of DIDs (single query, receipts joined). */
+export async function ballotEventsForDids(dids: string[]): Promise<Map<string, StoredBallot[]>> {
+  const map = new Map<string, StoredBallot[]>();
+  if (dids.length === 0) return map;
+  const rows =
+    (await safeQuery(
+      `SELECT b.did, b.seq, b.ts, b.entry_id, b.request_id, r.reason, r.intake_seq, r.received_at
+       FROM sonnet_ballots b
+       LEFT JOIN sonnet_ballot_receipts r
+         ON r.request_id = b.request_id AND r.sender_did = b.did
+       WHERE b.did = ANY($1::text[])
+       ORDER BY b.seq ASC`,
+      [dids.slice(0, 500)],
+    )) ?? [];
+  for (const r of rows) {
+    const did = String(r["did"] ?? "");
+    if (!did) continue;
+    const hasReceipt = r["reason"] !== null && r["reason"] !== undefined;
+    const reason = hasReceipt ? String(r["reason"] ?? "") : null;
+    const list = map.get(did) ?? [];
+    list.push({
+      seq: Number(r["seq"] ?? 0),
+      ts: String(r["ts"] ?? ""),
+      entryId: String(r["entry_id"] ?? ""),
+      requestId: String(r["request_id"] ?? ""),
+      status: hasReceipt ? (reason ? "rejected" : "accepted") : "pending",
+      reason: reason || null,
+      receiptAt:
+        r["received_at"] !== null && r["received_at"] !== undefined
+          ? new Date(Number(r["received_at"]) * 1000).toISOString()
+          : null,
+      intakeSeq: r["intake_seq"] !== null && r["intake_seq"] !== undefined ? Number(r["intake_seq"]) : null,
+    });
+    map.set(did, list);
+  }
+  return map;
+}
+
+export interface AcceptedBallot {
+  did: string;
+  entryId: string;
+  requestId: string;
+  intakeSeq: number | null;
+  receivedAt: string | null;
+}
+
+/** Ballot proposals count + each voter's LAST accepted ballot (the tally). */
+export async function acceptedBallotsByVoter(): Promise<{
+  proposals: number;
+  last: Map<string, AcceptedBallot>;
+}> {
+  const [countRows, rows] = await Promise.all([
+    safeQuery(`SELECT COUNT(*) AS n FROM sonnet_ballots`),
+    safeQuery(
+      `SELECT request_id, sender_did, entry_id, intake_seq, received_at
+       FROM sonnet_ballot_receipts WHERE reason = '' AND entry_id IS NOT NULL`,
+    ),
+  ]);
+  const proposals = Number(countRows?.[0]?.["n"] ?? 0);
+  const last = new Map<string, AcceptedBallot>();
+  for (const r of rows ?? []) {
+    const did = String(r["sender_did"] ?? "");
+    const entryId = String(r["entry_id"] ?? "");
+    if (!did || !entryId) continue;
+    const order = Number(r["intake_seq"] ?? 0);
+    const prev = last.get(did);
+    if (!prev || order >= (prev.intakeSeq ?? 0)) {
+      last.set(did, {
+        did,
+        entryId,
+        requestId: String(r["request_id"] ?? ""),
+        intakeSeq: Number.isFinite(order) ? order : null,
+        receivedAt:
+          r["received_at"] !== null && r["received_at"] !== undefined
+            ? new Date(Number(r["received_at"]) * 1000).toISOString()
+            : null,
+      });
+    }
+  }
+  return { proposals, last };
+}
+
+/** Ballot rows for a set of request ids: requestId -> {seq, ts}. */
+export async function ballotsByRequestIds(
+  ids: string[],
+): Promise<Map<string, { seq: number; ts: string; did: string }>> {
+  const map = new Map<string, { seq: number; ts: string; did: string }>();
+  if (ids.length === 0) return map;
+  const rows =
+    (await safeQuery(
+      `SELECT request_id, seq, ts, did FROM sonnet_ballots WHERE request_id = ANY($1::text[])`,
+      [ids.slice(0, 500)],
+    )) ?? [];
+  for (const r of rows) {
+    map.set(String(r["request_id"] ?? ""), {
+      seq: Number(r["seq"] ?? 0),
+      ts: String(r["ts"] ?? ""),
+      did: String(r["did"] ?? ""),
+    });
+  }
+  return map;
 }
 
 async function boardsStale(): Promise<boolean> {
@@ -609,10 +801,10 @@ export interface MySonnetStatus {
 
 /** The connected identity's own sonnet-2 status: registration + ballots. */
 export async function mySonnetStatus(did: string): Promise<MySonnetStatus> {
-  const [regRows, storedRegs, voteMessages, overview] = await Promise.all([
+  const [regRows, storedRegs, ballots, overview] = await Promise.all([
     safeQuery("SELECT role, x_account FROM sonnet_writers WHERE did = $1", [did]).catch(() => null),
     registrationsForDids([did]).catch(() => new Map<string, StoredRegistration[]>()),
-    boardMessages(SONNET.rooms.votes),
+    ballotsForDid(did).catch(() => [] as StoredBallot[]),
     loadSonnetOverview().catch(() => null),
   ]);
 
@@ -639,28 +831,18 @@ export async function mySonnetStatus(did: string): Promise<MySonnetStatus> {
     registered = { role: String(reg["role"] ?? ""), x: (reg["x_account"] as string) ?? null };
   }
 
-  const receipts = parseReceipts(voteMessages);
-  const mine: MyBallot[] = [];
-  for (const m of voteMessages) {
-    if (m.from !== did) continue;
-    const o = json(m.text);
-    if (!o || str(o.type) !== "sonnet.ballot.v1") continue;
-    const entryId = str(o.entry_id);
-    const requestId = str(o.request_id);
-    if (!entryId || !requestId) continue;
-    const r = receipts.find((x) => x.requestId === requestId && x.senderDid === did);
-    mine.push({
-      entryId,
-      requestId,
-      roomSeq: m.seq,
-      ts: m.ts,
-      status: r ? (r.reason ? "rejected" : "accepted") : "pending",
-      reason: r?.reason ?? null,
-      receiptAt: r?.receivedAt ? new Date(r.receivedAt * 1000).toISOString() : null,
-      intakeSeq: r?.intakeSeq ?? null,
-    });
-  }
-  mine.sort((a, b) => b.roomSeq - a.roomSeq);
+  const mine: MyBallot[] = ballots
+    .map((b) => ({
+      entryId: b.entryId,
+      requestId: b.requestId,
+      roomSeq: b.seq,
+      ts: b.ts,
+      status: b.status,
+      reason: b.reason,
+      receiptAt: b.receiptAt,
+      intakeSeq: b.intakeSeq,
+    }))
+    .sort((a, b) => b.roomSeq - a.roomSeq);
   const ballot = mine[0] ?? null;
 
   let entry: MySonnetStatus["entry"] = null;
@@ -790,28 +972,30 @@ export async function entryVoterReport(entryId: string): Promise<VoterReport> {
   const hit = voterReportCache.get(entryId);
   if (hit && Date.now() - hit.at < VOTER_REPORT_TTL_MS) return hit.report;
 
-  const [voteMessages, overview] = await Promise.all([
-    boardMessages(SONNET.rooms.votes),
+  const [tally, overview] = await Promise.all([
+    acceptedBallotsByVoter().catch(() => ({
+      proposals: 0,
+      last: new Map<string, AcceptedBallot>(),
+    })),
     loadSonnetOverview().catch(() => null),
   ]);
 
   // Effective ballots for this entry: each voter's LAST accepted ballot.
-  const accepted = new Map<string, { entryId: string; requestId: string; seq: number; ts: string; intakeSeq: number | null; voteAt: string | null }>();
-  for (const r of parseReceipts(voteMessages)) {
-    if (!r.entryId || r.reason !== "" || !r.senderDid) continue;
-    const prev = accepted.get(r.senderDid);
-    const order = r.intakeSeq ?? 0;
-    if (prev && order < (prev.intakeSeq ?? 0)) continue;
-    const proposal = voteMessages.find(
-      (m) => m.from === r.senderDid && str(json(m.text)?.request_id) === r.requestId,
-    );
-    accepted.set(r.senderDid, {
-      entryId: r.entryId,
-      requestId: r.requestId,
-      seq: proposal?.seq ?? 0,
-      ts: proposal?.ts ?? "",
-      intakeSeq: r.intakeSeq ?? null,
-      voteAt: r.receivedAt ? new Date(r.receivedAt * 1000).toISOString() : (proposal?.ts ?? null),
+  const forEntry = [...tally.last.values()].filter((b) => b.entryId === entryId);
+  const ballotRows = await ballotsByRequestIds(forEntry.map((b) => b.requestId));
+  const accepted = new Map<
+    string,
+    { entryId: string; requestId: string; seq: number; ts: string; intakeSeq: number | null; voteAt: string | null }
+  >();
+  for (const b of forEntry) {
+    const row = ballotRows.get(b.requestId);
+    accepted.set(b.did, {
+      entryId: b.entryId,
+      requestId: b.requestId,
+      seq: row?.seq ?? 0,
+      ts: row?.ts ?? "",
+      intakeSeq: b.intakeSeq,
+      voteAt: b.receivedAt ?? row?.ts ?? null,
     });
   }
   const mine = [...accepted.entries()].filter(([, b]) => b.entryId === entryId);
@@ -837,24 +1021,22 @@ export async function entryVoterReport(entryId: string): Promise<VoterReport> {
       })),
     );
   }
+  const ballotEvents = await ballotEventsForDids(mine.map(([did]) => did)).catch(
+    () => new Map<string, StoredBallot[]>(),
+  );
   const ballotsByDid = new Map<string, VoterBallotEvent[]>();
-  for (const m of voteMessages) {
-    const o = json(m.text);
-    if (!o || str(o.type) !== "sonnet.ballot.v1") continue;
-    const entryId = str(o.entry_id);
-    const requestId = str(o.request_id);
-    if (!entryId || !requestId) continue;
-    const rr = parseReceipts(voteMessages).find((x) => x.requestId === requestId && x.senderDid === m.from);
-    const list = ballotsByDid.get(m.from) ?? [];
-    list.push({
-      entryId,
-      seq: m.seq,
-      ts: m.ts,
-      requestId,
-      status: rr ? (rr.reason ? "rejected" : "accepted") : "pending",
-      reason: rr?.reason ?? null,
-    });
-    ballotsByDid.set(m.from, list);
+  for (const [voterDid, list] of ballotEvents) {
+    ballotsByDid.set(
+      voterDid,
+      list.map((b) => ({
+        entryId: b.entryId,
+        seq: b.seq,
+        ts: b.ts,
+        requestId: b.requestId,
+        status: b.status,
+        reason: b.reason,
+      })),
+    );
   }
   for (const list of regsByDid.values()) list.sort((a, b) => a.seq - b.seq);
   for (const list of ballotsByDid.values()) list.sort((a, b) => a.seq - b.seq);
@@ -1124,13 +1306,13 @@ export async function loadSonnetOverview(opts: { fresh?: boolean } = {}): Promis
 
 async function buildOverview(): Promise<SonnetOverview> {
   return (async () => {
-    const [rules, discovery, votes, submissions, writers, roleRows] = await Promise.all([
+    const [rules, discovery, submissions, writers, roleRows, ballotTally] = await Promise.all([
       readSonnetRoom(SONNET.rooms.rules).catch(() => [] as SonnetMessage[]),
       boardMessages(SONNET.rooms.discovery),
-      boardMessages(SONNET.rooms.votes),
       boardMessages(SONNET.rooms.submissions),
       writersFromDb().catch(() => new Map<string, WriterRow>()),
       safeQuery("SELECT role, COUNT(*) AS n FROM sonnet_writers GROUP BY role").catch(() => null),
+      acceptedBallotsByVoter().catch(() => ({ proposals: 0, last: new Map<string, AcceptedBallot>() })),
     ]);
 
     // Keep the persisted board fresh in the background (never blocks).
@@ -1237,21 +1419,9 @@ async function buildOverview(): Promise<SonnetOverview> {
       }
     }
 
-    // --- ballots: each voter's LAST accepted ballot counts ---
-    const acceptedBallots = new Map<string, { entryId: string; order: number }>();
-    let ballotProposals = 0;
-    for (const m of votes) {
-      const o = json(m.text);
-      if (o && str(o.type) === "sonnet.ballot.v1") ballotProposals++;
-    }
-    for (const r of parseReceipts(votes)) {
-      if (!r.entryId || r.reason !== "" || !r.senderDid) continue;
-      const prev = acceptedBallots.get(r.senderDid);
-      const order = r.intakeSeq ?? 0;
-      if (!prev || order >= prev.order) {
-        acceptedBallots.set(r.senderDid, { entryId: r.entryId, order });
-      }
-    }
+    // --- ballots: each voter's LAST accepted ballot counts (DB-parsed) ---
+    const ballotProposals = ballotTally.proposals;
+    const acceptedBallots = ballotTally.last;
     const tally = new Map<string, number>();
     for (const b of acceptedBallots.values()) {
       tally.set(b.entryId, (tally.get(b.entryId) ?? 0) + 1);
