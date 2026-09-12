@@ -1298,21 +1298,26 @@ export async function entryVoterReport(entryId: string): Promise<VoterReport> {
     freshDids: fresh.length,
   };
 
-  // Top declared X handles across the contest, excluding flagged voters and the
-  // reported entry's own team (the share text tags the rest of the field).
+  // The accounts to tag: writers of the top-ranked entries (votes, then
+  // words), each entry's most productive members first. This picks the people
+  // behind the submitted X posts, not random zero-word wallets. Flagged
+  // wallets and the reported entry's own team are never tagged.
   const flaggedDids = new Set(voters.filter((v) => v.flags.length > 0).map((v) => v.did));
   const mentionMap = new Map<string, VoterReportMention>();
-  for (const t of overview?.teams ?? []) {
-    if (t.entryId === entryId) continue;
-    for (const m of t.members) {
-      if (!m.x || flaggedDids.has(m.did)) continue;
+  const rankedTeams = (overview?.teams ?? [])
+    .filter((t) => t.entryId && t.entryId !== entryId)
+    .sort((a, b) => b.votes - a.votes || b.wordCount - a.wordCount);
+  for (const t of rankedTeams) {
+    if (mentionMap.size >= 30) break;
+    for (const m of t.members.slice().sort((a, b) => b.words - a.words)) {
+      if (mentionMap.size >= 30) break;
+      if (!m.x || m.words <= 0 || flaggedDids.has(m.did)) continue;
       const handle = xHandle(m.x);
-      if (!handle) continue;
-      const prev = mentionMap.get(handle);
-      if (!prev || m.words > prev.words) mentionMap.set(handle, { handle, words: m.words });
+      if (!handle || mentionMap.has(handle)) continue;
+      mentionMap.set(handle, { handle, words: m.words });
     }
   }
-  const mentions = [...mentionMap.values()].sort((a, b) => b.words - a.words).slice(0, 28);
+  const mentions = [...mentionMap.values()];
 
   const team = overview?.teams.find((t) => t.entryId === entryId) ?? null;
   const report: VoterReport = {

@@ -426,10 +426,12 @@ function ChartLegend({ items, right }: { items: { color: string; label: string }
 }
 
 /**
- * The X post. High/notable risk entries get a real expose: the hook, the
- * ledger numbers, the wallet flagged hardest, a fair-play message and the
- * contest writers tagged at the bottom. Clean entries get a short, honest
- * share. No em dashes, no filler.
+ * The X post. High/notable risk entries get a real expose: a lede anyone can
+ * follow (what Sonnet-2 is, what happened), the ledger numbers, the wallet
+ * flagged hardest, a fair-play message and the contest's top writers tagged
+ * at the bottom. Clean entries get a short, honest result share. No em
+ * dashes, no filler. The first ~280 characters stand alone, since a preview
+ * on the timeline cuts the rest.
  */
 function buildShareText(report: Report, label: string): string {
   const e = report.evidence;
@@ -437,19 +439,19 @@ function buildShareText(report: Report, label: string): string {
   const level = report.risk.level;
   const blocks: string[] = [];
   const mentions = (report.mentions ?? []).map((m) => m.handle);
-  const catchLine = level === "low" ? "Writers in this contest:" : "Writers who put in the work, this concerns you:";
+  const catchLine = level === "low" ? "Writers in this contest:" : "Writers from the top of this contest, this concerns you:";
   const mentionBlock = mentions.length ? `${catchLine}\n${mentions.join(" ")}` : null;
 
   if (level === "low" || !e || report.votes === 0) {
     if (report.votes === 0) {
       blocks.push(
-        `Sonnet-2 "${label}": no counted ballots yet, coordination risk ${score}/100 (${level}).`,
+        `Sonnet-2 is Flop's community poetry contest on Technocore. Entry "${label}" has no counted ballots yet.`,
         "The ledger is open anyway. Every registration and ballot is public, so a missing result is visible, not hidden.",
       );
     } else {
       blocks.push(
-        `Sonnet-2 "${label}" closed with ${report.votes} ballot${report.votes === 1 ? "" : "s"} and coordination risk ${score}/100 (${level}).`,
-        "No vote bursts, no shared request tags, no batch registrations. Just writers and readers showing up. This is what a clean, checkable result looks like.",
+        `Sonnet-2 is Flop's community poetry contest on Technocore. Entry "${label}" closed with ${report.votes} ballot${report.votes === 1 ? "" : "s"}, coordination risk ${score}/100 (${level}).`,
+        "No vote bursts, no shared request tags, no batch registrations. A clean result where every ballot is checkable.",
       );
     }
     blocks.push(
@@ -457,25 +459,26 @@ function buildShareText(report: Report, label: string): string {
     );
   } else {
     const flagWords = report.suspect ? report.suspect.flags.map((f) => FLAG_LABEL[f] ?? f).join(", ") : "";
+    const mins = Math.max(1, Math.round(e.clusterSecs / 60));
     const lines = [
       e.sameTagBallots > 1
-        ? `- ${e.sameTagBallots} of ${report.votes} counted ballots carried the same request tag`
+        ? `- ${e.sameTagBallots} of ${report.votes} counted ballots share one request tag`
         : null,
       e.clusterVotes > 1 ? `- ${e.clusterVotes} votes landed inside ${e.clusterSecs} seconds` : null,
-      e.regBurstDids > 1 ? `- ${e.regBurstDids} voter DIDs registered back to back before the flood` : null,
+      e.regBurstDids > 1 ? `- ${e.regBurstDids} voter DIDs registered back to back before the vote` : null,
       `- coordination risk ${score}/100, level ${level}`,
     ]
       .filter(Boolean)
       .join("\n");
     blocks.push(
-      `🚨 ${report.votes} ballots. One script behind ${e.sameTagBallots || e.clusterVotes} of them.`,
-      `Sonnet-2 entry "${label}" did not win a fanbase. It got a script.`,
+      `🚨 The Sonnet-2 poetry contest got farmed, and the receipts are public.`,
+      `Flop's community contest on Technocore logs every ballot on an open ledger. Entry "${label}" pulled ${report.votes} votes, and ${e.sameTagBallots || e.clusterVotes} of them carried the same request tag. ${e.clusterVotes} landed inside ${e.clusterSecs} seconds (about ${mins} minutes). ${e.regBurstDids} wallet DIDs registered back to back before the flood.`,
       `Public ledger, right now:\n${lines}`,
       report.suspect
-        ? `The wallet this analysis flags hardest: identity_${report.suspect.did.slice(-4)} (${flagWords}). Fresh identity, nothing written, hundreds of "supporters" arriving in lockstep.`
+        ? `Prime suspect: identity_${report.suspect.did.slice(-4)} (${flagWords}). No poem, no history, hundreds of "supporters" arriving in lockstep.`
         : `The pattern: fresh identities, nothing written, hundreds of "supporters" arriving in lockstep.`,
-      "To every writer who minted a DID, wrote real words and voted with their own hands: you did the work, and farming should not outrank it. Organizers, the receipts are public and they are not subtle. Rule on it.",
-      "I built floptools.nurlab.xyz solo. Create a DID, register, write, vote. Every ballot lands in public and every entry gets a fairness report like this one.",
+      `To every writer who minted a DID, wrote real words and voted with their own hands: you did the work, and farming should not outrank it. @flop_labs, the receipts are public and they are not subtle. Rule on it.`,
+      `I built floptools.nurlab.xyz solo. Create a DID, register, write, vote. Every ballot lands in public and every entry gets a fairness report like this one.`,
     );
   }
   if (mentionBlock) blocks.push(mentionBlock);
