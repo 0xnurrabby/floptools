@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
@@ -66,7 +66,7 @@ interface Report {
 }
 
 function msGap(ms: number | null): string {
-  if (ms === null) return "—";
+  if (ms === null) return "â€”";
   if (ms < 60_000) return `${Math.max(1, Math.round(ms / 1000))}s`;
   const m = Math.round(ms / 60_000);
   if (m < 120) return `${m}m`;
@@ -101,8 +101,8 @@ function ActivityTimeline({ voter, entryId }: { voter: Voter; entryId: string })
                 registration
               </StatusChip>
               <span className="caption-sm text-body">
-                role <span className="font-mono">{e.reg.role}</span> · receipt {e.reg.receipt}
-                {e.reg.reason ? <span className="text-rose-600"> · {e.reg.reason}</span> : null}
+                role <span className="font-mono">{e.reg.role}</span> Â· receipt {e.reg.receipt}
+                {e.reg.reason ? <span className="text-rose-600"> Â· {e.reg.reason}</span> : null}
               </span>
             </>
           ) : (
@@ -114,11 +114,11 @@ function ActivityTimeline({ voter, entryId }: { voter: Voter; entryId: string })
               </StatusChip>
               <span className={`caption-sm ${e.ballot.entryId === entryId ? "font-semibold text-ink" : "text-body"}`}>
                 entry <span className="font-mono">{e.ballot.entryId}</span>
-                {e.ballot.entryId === entryId ? " · this entry" : ""}
+                {e.ballot.entryId === entryId ? " Â· this entry" : ""}
               </span>
               <span className="caption-sm text-mute">
                 {e.ballot.status}
-                {e.ballot.reason ? ` · ${e.ballot.reason}` : ""}
+                {e.ballot.reason ? ` Â· ${e.ballot.reason}` : ""}
               </span>
             </>
           )}
@@ -150,12 +150,21 @@ function fmtClock(ms: number): string {
   return new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
+interface Tip {
+  pct: number;
+  idx: number;
+  head: string;
+  sub: string;
+  flagged: boolean;
+}
+
 /**
- * Vote arrivals. Small sets render one dot per voter; large sets render a
- * time histogram (bucketed), so 700+ votes stay a small, readable chart.
- * Flagged bursts are shaded; the y-scale is sqrt so spikes remain visible.
+ * Vote arrivals — fully interactive on mouse and touch. Small sets render one
+ * dot per voter; large sets render a time histogram (bucketed) so 700+ votes
+ * stay a small, readable chart. Hover/scrub anywhere for exact counts.
  */
 function Timeline({ voters, span, signals }: { voters: Voter[]; span: Report["span"]; signals: Signal[] }) {
+  const [tip, setTip] = useState<Tip | null>(null);
   const W = 820;
   const H = 230;
   const padTop = 16;
@@ -164,21 +173,21 @@ function Timeline({ voters, span, signals }: { voters: Voter[]; span: Report["sp
   const plotW = W - padX * 2;
   const plotH = H - padTop - padBottom;
 
-  const times = voters
+  const points = voters
     .map((v) => ({ v, ms: Date.parse(v.voteAt ?? v.ballotTs) }))
-    .filter((x) => Number.isFinite(x.ms))
+    .filter((p) => Number.isFinite(p.ms))
     .sort((a, b) => a.ms - b.ms);
-  if (times.length === 0) return null;
+  if (points.length === 0) return null;
 
   const start = span.startMs - 30_000;
   const end = span.endMs + 30_000;
   const spanMs = Math.max(1, end - start);
   const x = (ms: number) => padX + ((ms - start) / spanMs) * plotW;
+  const pctOf = (svgX: number) => Math.min(95, Math.max(5, (svgX / W) * 100));
 
-  // Burst bands from the flagged clusters.
   const bands: { x1: number; x2: number; high: boolean }[] = [];
   for (const s of signals.filter((s) => s.kind === "vote-cluster")) {
-    const ts = times.filter((t) => s.dids.includes(t.v.did)).map((t) => t.ms);
+    const ts = points.filter((p) => s.dids.includes(p.v.did)).map((p) => p.ms);
     if (ts.length === 0) continue;
     bands.push({
       x1: x(Math.min(...ts)) - 8,
@@ -187,44 +196,83 @@ function Timeline({ voters, span, signals }: { voters: Voter[]; span: Report["sp
     });
   }
   const inBand = (ms: number) => bands.some((b) => x(ms) >= b.x1 - 1 && x(ms) <= b.x2 + 1);
+  const svgXFromEvent = (e: React.PointerEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    return ((e.clientX - rect.left) / rect.width) * W;
+  };
 
   const ticks = 5;
   const axis = Array.from({ length: ticks }, (_, i) => start + (spanMs * i) / (ticks - 1));
 
-  // Small sets: one dot per voter (max ~24 rows).
+  // Small sets: one dot per voter.
   if (voters.length <= 24) {
     const rowH = 8;
     const dotsH = Math.max(60, voters.length * rowH);
     const y = (i: number) => padTop + (dotsH * (i + 1)) / (voters.length + 1);
+    const move = (e: React.PointerEvent<HTMLDivElement>) => {
+      const sx = svgXFromEvent(e);
+      let best = 0;
+      let bestD = Number.POSITIVE_INFINITY;
+      points.forEach((p, i) => {
+        const d = Math.abs(x(p.ms) - sx);
+        if (d < bestD) {
+          bestD = d;
+          best = i;
+        }
+      });
+      const p = points[best]!;
+      setTip({
+        pct: pctOf(x(p.ms)),
+        idx: best,
+        head: `identity_${p.v.did.slice(-4)}`,
+        sub: new Date(p.ms).toLocaleString(),
+        flagged: p.v.flags.includes("vote-cluster") || p.v.flags.includes("same-tag"),
+      });
+    };
     return (
-      <svg viewBox={`0 0 ${W} ${padTop + dotsH + padBottom}`} className="h-auto w-full text-ink" role="img" aria-label="Vote timeline">
-        {axis.map((t, i) => (
-          <line key={i} x1={x(t)} y1={padTop} x2={x(t)} y2={padTop + dotsH} stroke="currentColor" strokeOpacity="0.08" />
-        ))}
-        {bands.map((b, i) => (
-          <rect key={i} x={b.x1} y={padTop} width={Math.max(3, b.x2 - b.x1)} height={dotsH} rx="4" fill={b.high ? "#e11d48" : "#f59e0b"} fillOpacity="0.08" />
-        ))}
-        {times.map((t, i) => {
-          const flagged = t.v.flags.includes("vote-cluster") || t.v.flags.includes("same-tag");
-          return (
-            <circle
-              key={t.v.did}
-              cx={x(t.ms)}
-              cy={y(i)}
-              r={flagged ? 4.5 : 3.5}
-              fill={flagged ? "#e11d48" : "#4f46e5"}
-              fillOpacity="0.9"
-            >
-              <title>{`identity_${t.v.did.slice(-4)} · ${new Date(t.ms).toLocaleString()}`}</title>
-            </circle>
-          );
-        })}
-        {axis.map((t, i) => (
-          <text key={i} x={x(t)} y={padTop + dotsH + 16} textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.55">
-            {fmtClock(t)}
-          </text>
-        ))}
-      </svg>
+      <div className="relative" onPointerMove={move} onPointerDown={move} onPointerLeave={() => setTip(null)}>
+        <svg viewBox={`0 0 ${W} ${padTop + dotsH + padBottom}`} className="h-auto w-full text-ink" role="img" aria-label="Vote timeline">
+          {axis.map((t, i) => (
+            <line key={i} x1={x(t)} y1={padTop} x2={x(t)} y2={padTop + dotsH} stroke="currentColor" strokeOpacity="0.08" />
+          ))}
+          {bands.map((b, i) => (
+            <rect key={i} x={b.x1} y={padTop} width={Math.max(3, b.x2 - b.x1)} height={dotsH} rx="4" fill={b.high ? "#e11d48" : "#f59e0b"} fillOpacity="0.08" />
+          ))}
+          {tip ? (
+            <line x1={x(points[tip.idx]!.ms)} y1={padTop - 4} x2={x(points[tip.idx]!.ms)} y2={padTop + dotsH} stroke="#0b0b0f" strokeOpacity="0.25" strokeDasharray="3 3" />
+          ) : null}
+          {points.map((p, i) => {
+            const flagged = p.v.flags.includes("vote-cluster") || p.v.flags.includes("same-tag");
+            const active = tip?.idx === i;
+            return (
+              <circle
+                key={p.v.did}
+                cx={x(p.ms)}
+                cy={y(i)}
+                r={active ? 6 : flagged ? 4.5 : 3.5}
+                fill={flagged ? "#e11d48" : "#4f46e5"}
+                fillOpacity={tip && !active ? 0.45 : 0.9}
+                stroke={active ? "#0b0b0f" : "none"}
+                strokeOpacity="0.5"
+                strokeWidth="1.5"
+              />
+            );
+          })}
+          {axis.map((t, i) => (
+            <text key={i} x={x(t)} y={padTop + dotsH + 16} textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.55">
+              {fmtClock(t)}
+            </text>
+          ))}
+        </svg>
+        {tip ? <ChartTip tip={tip} /> : null}
+        <ChartLegend
+          items={[
+            { color: "#4f46e5", label: "voter" },
+            { color: "#e11d48", label: "flagged voter" },
+          ]}
+          right={`${voters.length} votes · ${fmtClock(span.startMs)} → ${fmtClock(span.endMs)}`}
+        />
+      </div>
     );
   }
 
@@ -233,21 +281,35 @@ function Timeline({ voters, span, signals }: { voters: Voter[]; span: Report["sp
   const bucketCount = Math.max(1, Math.ceil(spanMs / bucketMs));
   const counts = new Array<number>(bucketCount).fill(0);
   const flaggedBuckets = new Array<boolean>(bucketCount).fill(false);
-  for (const t of times) {
-    const idx = Math.min(bucketCount - 1, Math.floor((t.ms - start) / bucketMs));
+  for (const p of points) {
+    const idx = Math.min(bucketCount - 1, Math.floor((p.ms - start) / bucketMs));
     counts[idx] += 1;
-    if (inBand(t.ms)) flaggedBuckets[idx] = true;
+    if (inBand(p.ms)) flaggedBuckets[idx] = true;
   }
   const maxCount = Math.max(1, ...counts);
+  const peakIdx = counts.indexOf(maxCount);
+  const peakMs = start + peakIdx * bucketMs;
   const barGap = bucketCount > 48 ? 1 : 2;
   const barW = Math.max(1.5, plotW / bucketCount - barGap);
   const h = (n: number) => (Math.sqrt(n / maxCount) * plotH);
+  const bucketLabel = bucketMs >= 60_000 ? `${Math.round(bucketMs / 60_000)} min` : `${Math.round(bucketMs / 1000)}s`;
 
-  const peakIdx = counts.indexOf(maxCount);
-  const peakMs = start + peakIdx * bucketMs;
+  const move = (e: React.PointerEvent<HTMLDivElement>) => {
+    const sx = svgXFromEvent(e);
+    const idx = Math.min(bucketCount - 1, Math.max(0, Math.floor((sx - padX) / (plotW / bucketCount))));
+    const a = start + idx * bucketMs;
+    const b = Math.min(end, a + bucketMs);
+    setTip({
+      pct: pctOf(sx),
+      idx,
+      head: `${counts[idx]} vote${counts[idx] === 1 ? "" : "s"}`,
+      sub: `${fmtClock(a)} – ${fmtClock(b)}`,
+      flagged: flaggedBuckets[idx],
+    });
+  };
 
   return (
-    <div>
+    <div className="relative" onPointerMove={move} onPointerDown={move} onPointerLeave={() => setTip(null)}>
       <svg viewBox={`0 0 ${W} ${padTop + plotH + padBottom}`} className="h-auto w-full text-ink" role="img" aria-label="Vote timeline">
         <defs>
           <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
@@ -259,7 +321,6 @@ function Timeline({ voters, span, signals }: { voters: Voter[]; span: Report["sp
             <stop offset="100%" stopColor="#fb7185" />
           </linearGradient>
         </defs>
-        {/* horizontal grid */}
         {[0.25, 0.5, 0.75, 1].map((f) => (
           <line
             key={f}
@@ -272,22 +333,24 @@ function Timeline({ voters, span, signals }: { voters: Voter[]; span: Report["sp
           />
         ))}
         {bands.map((b, i) => (
-          <rect
-            key={i}
-            x={b.x1}
-            y={padTop - 4}
-            width={Math.max(3, b.x2 - b.x1)}
-            height={plotH + 4}
-            rx="4"
-            fill={b.high ? "#e11d48" : "#f59e0b"}
-            fillOpacity="0.07"
-          />
+          <rect key={i} x={b.x1} y={padTop - 4} width={Math.max(3, b.x2 - b.x1)} height={plotH + 4} rx="4" fill={b.high ? "#e11d48" : "#f59e0b"} fillOpacity="0.07" />
         ))}
-        {/* bars */}
+        {tip ? (
+          <line
+            x1={padX + (tip.idx * plotW) / bucketCount}
+            y1={padTop - 6}
+            x2={padX + (tip.idx * plotW) / bucketCount}
+            y2={padTop + plotH}
+            stroke="#0b0b0f"
+            strokeOpacity="0.28"
+            strokeDasharray="3 3"
+          />
+        ) : null}
         {counts.map((n, i) => {
           if (n === 0) return null;
           const bx = padX + i * (plotW / bucketCount) + barGap / 2;
           const bh = Math.max(2, h(n));
+          const active = tip?.idx === i;
           return (
             <rect
               key={i}
@@ -297,45 +360,60 @@ function Timeline({ voters, span, signals }: { voters: Voter[]; span: Report["sp
               height={bh}
               rx={Math.min(3, barW / 2)}
               fill={flaggedBuckets[i] ? "url(#barGradFlag)" : "url(#barGrad)"}
-              fillOpacity="0.9"
-            >
-              <title>
-                {`${fmtClock(start + i * bucketMs)} · ${n} vote${n === 1 ? "" : "s"}${
-                  flaggedBuckets[i] ? " · flagged burst" : ""
-                }`}
-              </title>
-            </rect>
+              fillOpacity={tip && !active ? 0.45 : 0.9}
+              stroke={active ? "#0b0b0f" : "none"}
+              strokeOpacity="0.4"
+              strokeWidth="1"
+            />
           );
         })}
-        {/* axis */}
         <line x1={padX} x2={padX + plotW} y1={padTop + plotH} y2={padTop + plotH} stroke="currentColor" strokeOpacity="0.18" />
         {axis.map((t, i) => (
           <text key={i} x={x(t)} y={H - 8} textAnchor={i === 0 ? "start" : i === ticks - 1 ? "end" : "middle"} fontSize="10" fill="currentColor" fillOpacity="0.55">
             {fmtClock(t)}
           </text>
         ))}
-        {/* peak marker */}
-        <text x={Math.min(W - 60, Math.max(60, x(peakMs)))} y={padTop + 10} textAnchor="middle" fontSize="10" fill="#e11d48" fillOpacity="0.9">
-          {`peak ${maxCount}/${bucketMs >= 60_000 ? `${Math.round(bucketMs / 60_000)}m` : `${Math.round(bucketMs / 1000)}s`}`}
-        </text>
       </svg>
-      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
-        <span className="caption-sm flex items-center gap-1.5 text-body">
-          <span className="inline-block h-2.5 w-2.5 rounded-[3px] bg-brand-500" />
-          votes per {bucketMs >= 60_000 ? `${Math.round(bucketMs / 60_000)} min` : `${Math.round(bucketMs / 1000)}s`}
-        </span>
-        <span className="caption-sm flex items-center gap-1.5 text-body">
-          <span className="inline-block h-2.5 w-2.5 rounded-[3px] bg-rose-600" />
-          flagged burst
-        </span>
-        <span className="caption-sm text-mute sm:ml-auto">
-          {voters.length} votes · {fmtClock(span.startMs)} → {fmtClock(span.endMs)}
-        </span>
-      </div>
+      {tip ? <ChartTip tip={tip} /> : null}
+      <ChartLegend
+        items={[
+          { color: "#6366f1", label: `votes per ${bucketLabel}` },
+          { color: "#e11d48", label: "flagged burst" },
+        ]}
+        right={`${voters.length} votes · peak ${maxCount} at ${fmtClock(peakMs)}`}
+      />
     </div>
   );
 }
 
+function ChartTip({ tip }: { tip: Tip }) {
+  return (
+    <div
+      className="pointer-events-none absolute top-1 z-10 -translate-x-1/2 whitespace-nowrap rounded-[10px] border border-hairline-strong bg-canvas px-3 py-1.5 shadow-lg"
+      style={{ left: `${tip.pct}%` }}
+    >
+      <p className="caption-sm font-semibold text-ink">
+        {tip.head}
+        {tip.flagged ? <span className="ml-1.5 text-rose-600">flagged</span> : null}
+      </p>
+      <p className="caption-sm font-mono text-mute">{tip.sub}</p>
+    </div>
+  );
+}
+
+function ChartLegend({ items, right }: { items: { color: string; label: string }[]; right: string }) {
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+      {items.map((it) => (
+        <span key={it.label} className="caption-sm flex items-center gap-1.5 text-body">
+          <span className="inline-block h-2.5 w-2.5 rounded-[3px]" style={{ background: it.color }} />
+          {it.label}
+        </span>
+      ))}
+      <span className="caption-sm text-mute sm:ml-auto">{right}</span>
+    </div>
+  );
+}
 export function SonnetVoterReport({
   entryId,
   gameId,
@@ -359,7 +437,7 @@ export function SonnetVoterReport({
   );
 }
 
-/** The report itself — used by the dialog and the standalone /sonnet/report page. */
+/** The report itself â€” used by the dialog and the standalone /sonnet/report page. */
 export function SonnetReportBody({
   entryId,
   gameId,
@@ -417,7 +495,7 @@ export function SonnetReportBody({
   const riskTone = risk?.level === "high" ? "error" : risk?.level === "notable" ? "warn" : "ok";
   const shareText = report
     ? `Sonnet-2 ${gameId ?? entryId}: ${report.votes} voter${report.votes === 1 ? "" : "s"}, coordination risk ${report.risk.score}/100 (${report.risk.level})`
-    : `Sonnet-2 voters & rug report — ${gameId ?? entryId}`;
+    : `Sonnet-2 voters & rug report â€” ${gameId ?? entryId}`;
 
   return (
     <>
@@ -426,7 +504,7 @@ export function SonnetReportBody({
             <p className="caption-sm text-mute">voters & rug report</p>
             <h2 className="heading-md mt-0.5">
               <span className="font-mono">{gameId ?? entryId}</span>{" "}
-              <span className="text-mute">· entry {entryId}</span>
+              <span className="text-mute">Â· entry {entryId}</span>
             </h2>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -437,7 +515,7 @@ export function SonnetReportBody({
                 href={url}
                 className="body-sm rounded-full border border-hairline bg-canvas px-3.5 py-2 text-ink transition-colors hover:bg-surface-soft"
               >
-                Open page ↗
+                Open page â†—
               </a>
             ) : null}
             {url && report ? (
@@ -447,7 +525,7 @@ export function SonnetReportBody({
                 rel="noopener noreferrer"
                 className="body-sm rounded-full border border-hairline-strong bg-canvas px-4 py-2 text-ink transition-colors hover:bg-surface-soft"
               >
-                Share on X ↗
+                Share on X â†—
               </a>
             ) : null}
             {onClose ? (
@@ -464,7 +542,7 @@ export function SonnetReportBody({
 
         {error ? <div className="mt-4"><Note tone="error">{error}</Note></div> : null}
         {!report && !error ? (
-          <div className="mt-8 flex justify-center"><Spinner label="Reading every ballot and registration…" /></div>
+          <div className="mt-8 flex justify-center"><Spinner label="Reading every ballot and registrationâ€¦" /></div>
         ) : null}
 
         {report ? (
@@ -482,7 +560,7 @@ export function SonnetReportBody({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="body-sm-strong text-ink">Coordination signals</p>
                 <StatusChip tone={riskTone}>
-                  {risk?.level === "high" ? "high" : risk?.level === "notable" ? "notable" : "low"} · {risk?.score}/100
+                  {risk?.level === "high" ? "high" : risk?.level === "notable" ? "notable" : "low"} Â· {risk?.score}/100
                 </StatusChip>
               </div>
               <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/60">
@@ -530,7 +608,7 @@ export function SonnetReportBody({
                           className="rounded-full border border-hairline bg-canvas px-2.5 py-0.5 font-mono text-[11px] text-body hover:border-brand-500/40 hover:text-brand-700"
                           title={d}
                         >
-                          …{d.slice(-6)}
+                          â€¦{d.slice(-6)}
                         </Link>
                       ))}
                     </div>
@@ -543,9 +621,9 @@ export function SonnetReportBody({
             {report.words.length > 0 ? (
               <div className="rounded-[14px] border border-hairline bg-surface-card p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="body-sm-strong text-ink">Poem activity — who wrote what, when</p>
+                  <p className="body-sm-strong text-ink">Poem activity â€” who wrote what, when</p>
                   <span className="caption-sm text-mute">
-                    {report.words.length} accepted words · {report.poemRoom}
+                    {report.words.length} accepted words Â· {report.poemRoom}
                   </span>
                 </div>
                 <div className="mt-2 max-h-64 space-y-1 overflow-y-auto pr-1">
@@ -560,7 +638,7 @@ export function SonnetReportBody({
                         className="w-[86px] shrink-0 font-mono text-[11px] text-body hover:text-brand-700"
                         title={w.by}
                       >
-                        …{w.by.slice(-6)}
+                        â€¦{w.by.slice(-6)}
                       </Link>
                       <span className="font-mono font-medium text-ink">{w.word}</span>
                       {w.ts ? (
@@ -605,7 +683,7 @@ export function SonnetReportBody({
                               className="mr-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full border border-hairline bg-canvas text-[10px] text-body hover:bg-surface-soft"
                               aria-label={expanded.has(v.did) ? "Hide activity" : "Show full activity"}
                             >
-                              {expanded.has(v.did) ? "−" : "+"}
+                              {expanded.has(v.did) ? "âˆ’" : "+"}
                             </button>
                             <Link
                               href={`/trustcore/${encodeURIComponent(v.did)}`}
@@ -619,7 +697,7 @@ export function SonnetReportBody({
                             {v.regTs ? (
                               <>
                                 <LocalTime value={v.regTs} timeStyle="medium" />
-                                {v.regSeq !== null ? <span className="text-mute"> · seq {v.regSeq}</span> : null}
+                                {v.regSeq !== null ? <span className="text-mute"> Â· seq {v.regSeq}</span> : null}
                               </>
                             ) : (
                               <span className="text-mute">not in retained registrations</span>
@@ -631,7 +709,7 @@ export function SonnetReportBody({
                                 {v.regReceipt}
                               </StatusChip>
                             ) : (
-                              <span className="text-mute">—</span>
+                              <span className="text-mute">â€”</span>
                             )}
                           </td>
                           <td className="px-3 py-2 text-body">
@@ -639,7 +717,7 @@ export function SonnetReportBody({
                           </td>
                           <td className="px-3 py-2 text-body">{msGap(v.regToVoteMs)}</td>
                           <td className="px-3 py-2">
-                            <span className="font-mono text-[11px] text-body">{v.tag || "—"}</span>
+                            <span className="font-mono text-[11px] text-body">{v.tag || "â€”"}</span>
                           </td>
                           <td className="px-3 py-2">
                             <span className="flex flex-wrap gap-1">
@@ -658,7 +736,7 @@ export function SonnetReportBody({
                         {expanded.has(v.did) ? (
                           <tr className="border-b border-hairline bg-canvas/70">
                             <td colSpan={7} className="px-3 py-3">
-                              <p className="caption-sm font-medium text-ink">Full activity · identity_{v.did.slice(-4)}</p>
+                              <p className="caption-sm font-medium text-ink">Full activity Â· identity_{v.did.slice(-4)}</p>
                               <div className="mt-2">
                                 <ActivityTimeline voter={v} entryId={entryId} />
                               </div>
@@ -676,7 +754,7 @@ export function SonnetReportBody({
             <Note tone="info">
               Signals come from public data only: each DID&apos;s registration slot and time, the ballot
               arrival order and the request-id tag the voter&apos;s tool chose. Tight timing can also
-              happen in an honest campaign, and one operator may legitimately run several agents — these
+              happen in an honest campaign, and one operator may legitimately run several agents â€” these
               are markers to inspect, not proof. The referee judges conduct cases. Report generated{" "}
               <LocalTime value={report.generatedAt} timeStyle="medium" />.
             </Note>
