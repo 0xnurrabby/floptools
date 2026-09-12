@@ -393,8 +393,16 @@ async function persistBallots(messages: SonnetMessage[]): Promise<void> {
     ballots.push({ seq: m.seq, ts: m.ts, did: m.from, entryId, requestId });
   }
   const receipts = parseReceipts(messages).filter((r) => r.senderDid !== "");
-  for (let i = 0; i < ballots.length; i += 200) {
-    const chunk = ballots.slice(i, i + 200);
+  // Dedupe first: repeated rows inside one INSERT would make the conflict
+  // clause fail ("cannot affect row a second time") and lose the whole chunk.
+  const ballotMap = new Map<string, (typeof ballots)[number]>();
+  for (const b of ballots) ballotMap.set(b.requestId, b);
+  const uniqueBallots = [...ballotMap.values()];
+  const receiptMap = new Map<string, (typeof receipts)[number]>();
+  for (const r of receipts) receiptMap.set(`${r.requestId}|${r.senderDid}`, r);
+  const uniqueReceipts = [...receiptMap.values()];
+  for (let i = 0; i < uniqueBallots.length; i += 200) {
+    const chunk = uniqueBallots.slice(i, i + 200);
     const values: unknown[] = [];
     const ph = chunk.map((b, j) => {
       values.push(b.seq, b.ts, b.did, b.entryId, b.requestId);
@@ -409,8 +417,8 @@ async function persistBallots(messages: SonnetMessage[]): Promise<void> {
       values,
     );
   }
-  for (let i = 0; i < receipts.length; i += 200) {
-    const chunk = receipts.slice(i, i + 200);
+  for (let i = 0; i < uniqueReceipts.length; i += 200) {
+    const chunk = uniqueReceipts.slice(i, i + 200);
     const values: unknown[] = [];
     const ph = chunk.map((r, j) => {
       values.push(r.requestId, r.senderDid, r.entryId ?? null, r.reason, r.intakeSeq ?? null, r.receivedAt ?? null);
