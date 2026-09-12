@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { loadSonnetOverview, refreshWriters, sonnetOverviewCached } from "@/lib/sonnet";
-import { lastDbError } from "@/lib/db";
 
 /**
  * GET /api/sonnet/overview — the whole sonnet-2 board (teams, poems, votes).
@@ -16,14 +15,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   // called once in the background by the vote page when handles are missing.
   const withWriters = req.nextUrl.searchParams.get("writers") === "1";
   try {
-    let writersRefresh: Awaited<ReturnType<typeof refreshWriters>> | undefined;
-    if (withWriters) writersRefresh = await refreshWriters();
+    if (withWriters) await refreshWriters();
     const data = await loadSonnetOverview({ fresh: fresh || withWriters });
-    return NextResponse.json({
-      ok: true,
-      ...data,
-      ...(writersRefresh ? { writersRefresh, dbError: lastDbError } : {}),
-    });
+    return NextResponse.json({ ok: true, ...data });
   } catch (e) {
     const cached = sonnetOverviewCached();
     if (cached) return NextResponse.json({ ok: true, stale: true, ...cached });
