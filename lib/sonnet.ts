@@ -1298,10 +1298,9 @@ export async function entryVoterReport(entryId: string): Promise<VoterReport> {
     freshDids: fresh.length,
   };
 
-  // The accounts to tag: writers of the top-ranked entries (votes, then
-  // words), each entry's most productive members first. This picks the people
-  // behind the submitted X posts, not random zero-word wallets. Flagged
-  // wallets and the reported entry's own team are never tagged. Handles come
+  // The accounts to tag: the most productive writers of the other ranked
+  // entries (the people behind the submitted X posts), never zero-word
+  // wallets, flagged wallets, or the reported entry's own team. Handles come
   // from the sonnet_writers DB index so a cold instance still tags correctly.
   const flaggedDids = new Set(voters.filter((v) => v.flags.length > 0).map((v) => v.did));
   const writerRows = await safeQuery(
@@ -1313,20 +1312,18 @@ export async function entryVoterReport(entryId: string): Promise<VoterReport> {
     const account = String(row["x_account"] ?? "");
     if (did && account) xByDid.set(did, account);
   }
-  const mentionMap = new Map<string, VoterReportMention>();
-  const rankedTeams = (overview?.teams ?? [])
+  const candidates = (overview?.teams ?? [])
     .filter((t) => t.entryId && t.entryId !== entryId)
-    .sort((a, b) => b.votes - a.votes || b.wordCount - a.wordCount);
-  for (const t of rankedTeams) {
+    .flatMap((t) => t.members)
+    .sort((a, b) => b.words - a.words);
+  const mentionMap = new Map<string, VoterReportMention>();
+  for (const m of candidates) {
     if (mentionMap.size >= 30) break;
-    for (const m of t.members.slice().sort((a, b) => b.words - a.words)) {
-      if (mentionMap.size >= 30) break;
-      const rawAccount = xByDid.get(m.did) ?? m.x;
-      if (!rawAccount || m.words <= 0 || flaggedDids.has(m.did)) continue;
-      const handle = xHandle(rawAccount);
-      if (!handle || mentionMap.has(handle)) continue;
-      mentionMap.set(handle, { handle, words: m.words });
-    }
+    const rawAccount = xByDid.get(m.did) ?? m.x;
+    if (!rawAccount || m.words <= 0 || flaggedDids.has(m.did)) continue;
+    const handle = xHandle(rawAccount);
+    if (!handle || mentionMap.has(handle)) continue;
+    mentionMap.set(handle, { handle, words: m.words });
   }
   const mentions = [...mentionMap.values()];
 
