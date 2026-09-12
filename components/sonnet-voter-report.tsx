@@ -439,7 +439,7 @@ function buildShareText(report: Report, label: string): string {
   const level = report.risk.level;
   const blocks: string[] = [];
   const mentions = (report.mentions ?? []).map((m) => m.handle);
-  const catchLine = level === "low" ? "Writers in this contest:" : "Writers from the top of this contest, this concerns you:";
+  const catchLine = level === "low" ? "Writers in this contest:" : "Sonnet-2 writers, this concerns you:";
   const mentionBlock = mentions.length ? `${catchLine}\n${mentions.join(" ")}` : null;
 
   if (level === "low" || !e || report.votes === 0) {
