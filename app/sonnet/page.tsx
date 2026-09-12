@@ -8,6 +8,7 @@ import { LocalTime } from "@/components/local-time";
 interface Overview {
   ok: boolean;
   updatedAt: string;
+  cachedAt?: string;
   contest: {
     opening: number;
     deadline: number;
@@ -22,6 +23,8 @@ interface Overview {
     } | null;
   };
   totals: { teams: number; entries: number; ballots: number; countedBallots: number; voters: number };
+  participants?: { writers: number; voters: number; organizers: number };
+  writersIndexed?: number;
 }
 
 const CARDS = [
@@ -83,12 +86,14 @@ export default function SonnetPage() {
 
       {data ? (
         <div className="mt-5 flex flex-wrap items-center gap-2">
-          <StatusChip tone="ok">{status?.teams ?? 0} teams</StatusChip>
-          <StatusChip tone="ok">{status?.writers ?? 0} writers</StatusChip>
-          <StatusChip tone="ok">{status?.voters ?? 0} voters</StatusChip>
+          <StatusChip tone="ok">{status?.teams || data.totals.teams} teams</StatusChip>
+          <StatusChip tone="ok">
+            {status?.writers || data.participants?.writers || data.writersIndexed || 0} writers
+          </StatusChip>
+          <StatusChip tone="ok">{status?.voters || data.participants?.voters || 0} voters</StatusChip>
           <StatusChip tone="empty">{data.totals.countedBallots} counted ballots</StatusChip>
           <span className="caption-sm text-mute">
-            updated <LocalTime value={data.updatedAt} timeStyle="medium" />
+            updated <LocalTime value={data.cachedAt ?? data.updatedAt} timeStyle="medium" />
           </span>
         </div>
       ) : error ? (

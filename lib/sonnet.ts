@@ -167,6 +167,8 @@ export interface SonnetOverview {
   };
   teams: SonnetTeam[];
   totals: { teams: number; entries: number; ballots: number; countedBallots: number; voters: number };
+  /** Always-computed registry counts (DB index), so numbers are never empty. */
+  participants: { writers: number; voters: number; organizers: number };
   writersIndexed: number;
 }
 
@@ -588,13 +590,22 @@ export async function loadSonnetOverview(opts: { fresh?: boolean } = {}): Promis
 
 async function buildOverview(): Promise<SonnetOverview> {
   return (async () => {
-    const [rules, discovery, votes, submissions, writers] = await Promise.all([
+    const [rules, discovery, votes, submissions, writers, roleRows] = await Promise.all([
       readSonnetRoom(SONNET.rooms.rules).catch(() => [] as SonnetMessage[]),
       readSonnetRoom(SONNET.rooms.discovery).catch(() => [] as SonnetMessage[]),
       readSonnetRoom(SONNET.rooms.votes).catch(() => [] as SonnetMessage[]),
       readSonnetRoom(SONNET.rooms.submissions).catch(() => [] as SonnetMessage[]),
       writersFromDb().catch(() => new Map<string, WriterRow>()),
+      safeQuery("SELECT role, COUNT(*) AS n FROM sonnet_writers GROUP BY role").catch(() => null),
     ]);
+    const participants = { writers: 0, voters: 0, organizers: 0 };
+    for (const r of roleRows ?? []) {
+      const role = String(r["role"] ?? "");
+      const n = Number(r["n"] ?? 0);
+      if (role === "writer") participants.writers = n;
+      else if (role === "voter") participants.voters = n;
+      else if (role === "organizer") participants.organizers = n;
+    }
 
     // Kick a background refresh of the writer index when needed (never blocks).
     void writersFresh()
@@ -796,6 +807,25 @@ async function buildOverview(): Promise<SonnetOverview> {
       (a, b) => b.votes - a.votes || b.wordCount - a.wordCount || a.gameId.localeCompare(b.gameId),
     );
 
+    // The referee status is authoritative when present, but never allow empty
+    // numbers: fall back to the registry index and the team list.
+    if (status) {
+      if (!status.teams) status.teams = teamsArr.length;
+      if (!status.writers) status.writers = participants.writers;
+      if (!status.voters) status.voters = participants.voters;
+      if (!status.organizers) status.organizers = participants.organizers;
+    } else {
+      status = {
+        accepted: 0,
+        rejected: 0,
+        teams: teamsArr.length,
+        writers: participants.writers,
+        voters: participants.voters,
+        organizers: participants.organizers,
+        rooms: [],
+      };
+    }
+
     const data: SonnetOverview = {
       updatedAt: new Date().toISOString(),
       contest: {
@@ -812,6 +842,7 @@ async function buildOverview(): Promise<SonnetOverview> {
         countedBallots: acceptedBallots.size,
         voters: acceptedBallots.size,
       },
+      participants,
       writersIndexed: writers.size,
     };
     return data;
