@@ -120,6 +120,12 @@ export default async function Image({ params }: { params: Promise<{ entryId: str
         </div>
       </div>
     ),
-    size,
+    {
+      ...size,
+      // Cache hard: crawlers and social platforms should fetch once.
+      headers: {
+        "cache-control": "public, max-age=600, s-maxage=86400, stale-while-revalidate=604800",
+      },
+    },
   );
 }

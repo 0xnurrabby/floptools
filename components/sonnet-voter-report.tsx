@@ -136,75 +136,203 @@ const FLAG_LABEL: Record<string, string> = {
   "fresh-did": "rushed DID",
 };
 
-/** Time-vs-voter scatter: tight runs show up as vertical stacks. */
-function Timeline({ voters, span, signals }: { voters: Voter[]; span: Report["span"]; signals: Signal[] }) {
-  const W = 780;
-  const rowH = 15;
-  const padTop = 22;
-  const H = padTop + Math.max(1, voters.length) * rowH + 6;
-  const start = span.startMs - 60_000;
-  const end = span.endMs + 60_000;
-  const spanMs = Math.max(1, end - start);
-  const x = (ms: number) => ((ms - start) / spanMs) * W;
-  const y = (i: number) => padTop + i * rowH + rowH / 2;
+/** Pick a readable bucket size for the histogram. */
+function niceBucketMs(raw: number): number {
+  const steps = [
+    1_000, 2_000, 5_000, 10_000, 15_000, 30_000, 60_000, 120_000, 300_000, 600_000, 1_800_000,
+    3_600_000, 7_200_000, 21_600_000,
+  ];
+  for (const s of steps) if (raw <= s) return s;
+  return 86_400_000;
+}
 
-  const clusterRanges: { x1: number; x2: number; high: boolean }[] = [];
+function fmtClock(ms: number): string {
+  return new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+}
+
+/**
+ * Vote arrivals. Small sets render one dot per voter; large sets render a
+ * time histogram (bucketed), so 700+ votes stay a small, readable chart.
+ * Flagged bursts are shaded; the y-scale is sqrt so spikes remain visible.
+ */
+function Timeline({ voters, span, signals }: { voters: Voter[]; span: Report["span"]; signals: Signal[] }) {
+  const W = 820;
+  const H = 230;
+  const padTop = 16;
+  const padBottom = 30;
+  const padX = 10;
+  const plotW = W - padX * 2;
+  const plotH = H - padTop - padBottom;
+
+  const times = voters
+    .map((v) => ({ v, ms: Date.parse(v.voteAt ?? v.ballotTs) }))
+    .filter((x) => Number.isFinite(x.ms))
+    .sort((a, b) => a.ms - b.ms);
+  if (times.length === 0) return null;
+
+  const start = span.startMs - 30_000;
+  const end = span.endMs + 30_000;
+  const spanMs = Math.max(1, end - start);
+  const x = (ms: number) => padX + ((ms - start) / spanMs) * plotW;
+
+  // Burst bands from the flagged clusters.
+  const bands: { x1: number; x2: number; high: boolean }[] = [];
   for (const s of signals.filter((s) => s.kind === "vote-cluster")) {
-    const times = voters
-      .filter((v) => s.dids.includes(v.did) && v.voteAt)
-      .map((v) => Date.parse(v.voteAt!))
-      .filter((n) => Number.isFinite(n));
-    if (times.length === 0) continue;
-    clusterRanges.push({
-      x1: x(Math.min(...times)) - 6,
-      x2: x(Math.max(...times)) + 6,
+    const ts = times.filter((t) => s.dids.includes(t.v.did)).map((t) => t.ms);
+    if (ts.length === 0) continue;
+    bands.push({
+      x1: x(Math.min(...ts)) - 8,
+      x2: x(Math.max(...ts)) + 8,
       high: s.severity === "high",
     });
   }
+  const inBand = (ms: number) => bands.some((b) => x(ms) >= b.x1 - 1 && x(ms) <= b.x2 + 1);
 
   const ticks = 5;
+  const axis = Array.from({ length: ticks }, (_, i) => start + (spanMs * i) / (ticks - 1));
+
+  // Small sets: one dot per voter (max ~24 rows).
+  if (voters.length <= 24) {
+    const rowH = 8;
+    const dotsH = Math.max(60, voters.length * rowH);
+    const y = (i: number) => padTop + (dotsH * (i + 1)) / (voters.length + 1);
+    return (
+      <svg viewBox={`0 0 ${W} ${padTop + dotsH + padBottom}`} className="h-auto w-full text-ink" role="img" aria-label="Vote timeline">
+        {axis.map((t, i) => (
+          <line key={i} x1={x(t)} y1={padTop} x2={x(t)} y2={padTop + dotsH} stroke="currentColor" strokeOpacity="0.08" />
+        ))}
+        {bands.map((b, i) => (
+          <rect key={i} x={b.x1} y={padTop} width={Math.max(3, b.x2 - b.x1)} height={dotsH} rx="4" fill={b.high ? "#e11d48" : "#f59e0b"} fillOpacity="0.08" />
+        ))}
+        {times.map((t, i) => {
+          const flagged = t.v.flags.includes("vote-cluster") || t.v.flags.includes("same-tag");
+          return (
+            <circle
+              key={t.v.did}
+              cx={x(t.ms)}
+              cy={y(i)}
+              r={flagged ? 4.5 : 3.5}
+              fill={flagged ? "#e11d48" : "#4f46e5"}
+              fillOpacity="0.9"
+            >
+              <title>{`identity_${t.v.did.slice(-4)} · ${new Date(t.ms).toLocaleString()}`}</title>
+            </circle>
+          );
+        })}
+        {axis.map((t, i) => (
+          <text key={i} x={x(t)} y={padTop + dotsH + 16} textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.55">
+            {fmtClock(t)}
+          </text>
+        ))}
+      </svg>
+    );
+  }
+
+  // Large sets: histogram.
+  const bucketMs = niceBucketMs(spanMs / 64);
+  const bucketCount = Math.max(1, Math.ceil(spanMs / bucketMs));
+  const counts = new Array<number>(bucketCount).fill(0);
+  const flaggedBuckets = new Array<boolean>(bucketCount).fill(false);
+  for (const t of times) {
+    const idx = Math.min(bucketCount - 1, Math.floor((t.ms - start) / bucketMs));
+    counts[idx] += 1;
+    if (inBand(t.ms)) flaggedBuckets[idx] = true;
+  }
+  const maxCount = Math.max(1, ...counts);
+  const barGap = bucketCount > 48 ? 1 : 2;
+  const barW = Math.max(1.5, plotW / bucketCount - barGap);
+  const h = (n: number) => (Math.sqrt(n / maxCount) * plotH);
+
+  const peakIdx = counts.indexOf(maxCount);
+  const peakMs = start + peakIdx * bucketMs;
+
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Vote timeline">
-      {Array.from({ length: ticks }, (_, i) => {
-        const t = start + (spanMs * i) / (ticks - 1);
-        const gx = x(t);
-        return (
-          <g key={i}>
-            <line x1={gx} y1={padTop - 6} x2={gx} y2={H - 2} stroke="currentColor" strokeOpacity="0.12" strokeWidth="1" />
-            <text x={gx} y={12} textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.5">
-              {new Date(t).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
-            </text>
-          </g>
-        );
-      })}
-      {clusterRanges.map((c, i) => (
-        <rect
-          key={i}
-          x={c.x1}
-          y={padTop - 6}
-          width={Math.max(2, c.x2 - c.x1)}
-          height={H - padTop}
-          fill={c.high ? "#e11d48" : "#f59e0b"}
-          fillOpacity="0.10"
-          rx="3"
-        />
-      ))}
-      {voters.map((v, i) => {
-        const ms = Date.parse(v.voteAt ?? v.ballotTs);
-        if (!Number.isFinite(ms)) return null;
-        const flagged = v.flags.includes("vote-cluster") || v.flags.includes("same-tag");
-        return (
-          <g key={v.did}>
-            <circle cx={x(ms)} cy={y(i)} r={flagged ? 4 : 3} fill={flagged ? "#e11d48" : "#4f46e5"} fillOpacity="0.85" />
-            <title>
-              {`identity_${v.did.slice(-4)} · ${new Date(ms).toLocaleString()}${
-                v.flags.length ? ` · ${v.flags.map((f) => FLAG_LABEL[f] ?? f).join(", ")}` : ""
-              }`}
-            </title>
-          </g>
-        );
-      })}
-    </svg>
+    <div>
+      <svg viewBox={`0 0 ${W} ${padTop + plotH + padBottom}`} className="h-auto w-full text-ink" role="img" aria-label="Vote timeline">
+        <defs>
+          <linearGradient id="barGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#6366f1" />
+            <stop offset="100%" stopColor="#a78bfa" />
+          </linearGradient>
+          <linearGradient id="barGradFlag" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#e11d48" />
+            <stop offset="100%" stopColor="#fb7185" />
+          </linearGradient>
+        </defs>
+        {/* horizontal grid */}
+        {[0.25, 0.5, 0.75, 1].map((f) => (
+          <line
+            key={f}
+            x1={padX}
+            x2={padX + plotW}
+            y1={padTop + plotH * (1 - f)}
+            y2={padTop + plotH * (1 - f)}
+            stroke="currentColor"
+            strokeOpacity="0.07"
+          />
+        ))}
+        {bands.map((b, i) => (
+          <rect
+            key={i}
+            x={b.x1}
+            y={padTop - 4}
+            width={Math.max(3, b.x2 - b.x1)}
+            height={plotH + 4}
+            rx="4"
+            fill={b.high ? "#e11d48" : "#f59e0b"}
+            fillOpacity="0.07"
+          />
+        ))}
+        {/* bars */}
+        {counts.map((n, i) => {
+          if (n === 0) return null;
+          const bx = padX + i * (plotW / bucketCount) + barGap / 2;
+          const bh = Math.max(2, h(n));
+          return (
+            <rect
+              key={i}
+              x={bx}
+              y={padTop + plotH - bh}
+              width={barW}
+              height={bh}
+              rx={Math.min(3, barW / 2)}
+              fill={flaggedBuckets[i] ? "url(#barGradFlag)" : "url(#barGrad)"}
+              fillOpacity="0.9"
+            >
+              <title>
+                {`${fmtClock(start + i * bucketMs)} · ${n} vote${n === 1 ? "" : "s"}${
+                  flaggedBuckets[i] ? " · flagged burst" : ""
+                }`}
+              </title>
+            </rect>
+          );
+        })}
+        {/* axis */}
+        <line x1={padX} x2={padX + plotW} y1={padTop + plotH} y2={padTop + plotH} stroke="currentColor" strokeOpacity="0.18" />
+        {axis.map((t, i) => (
+          <text key={i} x={x(t)} y={H - 8} textAnchor={i === 0 ? "start" : i === ticks - 1 ? "end" : "middle"} fontSize="10" fill="currentColor" fillOpacity="0.55">
+            {fmtClock(t)}
+          </text>
+        ))}
+        {/* peak marker */}
+        <text x={Math.min(W - 60, Math.max(60, x(peakMs)))} y={padTop + 10} textAnchor="middle" fontSize="10" fill="#e11d48" fillOpacity="0.9">
+          {`peak ${maxCount}/${bucketMs >= 60_000 ? `${Math.round(bucketMs / 60_000)}m` : `${Math.round(bucketMs / 1000)}s`}`}
+        </text>
+      </svg>
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+        <span className="caption-sm flex items-center gap-1.5 text-body">
+          <span className="inline-block h-2.5 w-2.5 rounded-[3px] bg-brand-500" />
+          votes per {bucketMs >= 60_000 ? `${Math.round(bucketMs / 60_000)} min` : `${Math.round(bucketMs / 1000)}s`}
+        </span>
+        <span className="caption-sm flex items-center gap-1.5 text-body">
+          <span className="inline-block h-2.5 w-2.5 rounded-[3px] bg-rose-600" />
+          flagged burst
+        </span>
+        <span className="caption-sm text-mute sm:ml-auto">
+          {voters.length} votes · {fmtClock(span.startMs)} → {fmtClock(span.endMs)}
+        </span>
+      </div>
+    </div>
   );
 }
 
@@ -371,7 +499,8 @@ export function SonnetReportBody({
               <div className="rounded-[14px] border border-hairline bg-surface-card p-4 text-ink">
                 <p className="body-sm-strong">When the votes landed</p>
                 <p className="caption-sm mt-0.5 text-body">
-                  One dot per voter (arrival order). Shaded bands are bursts the report flags.
+                  Vote arrivals over time; shaded bands are the bursts this report flags. Small sets show one
+                  dot per voter, larger sets are bucketed by time.
                 </p>
                 <div className="mt-2">
                   <Timeline voters={report.voters} span={report.span} signals={report.signals} />

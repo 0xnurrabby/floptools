@@ -17,6 +17,8 @@ export async function generateMetadata({
   const { entryId } = await params;
   const id = entryId.toLowerCase();
   if (!ENTRY_RE.test(id)) return { title: "Sonnet voters & rug report" };
+  // Crawlers (X, etc.) must be allowed to render the share card for this page.
+  const robots = { index: true, follow: true };
   try {
     const report = await entryVoterReport(id);
     const title = `${report.gameId ?? id} · ${report.votes} voter${report.votes === 1 ? "" : "s"} · risk ${report.risk.score}/100`;
@@ -24,11 +26,12 @@ export async function generateMetadata({
     return {
       title,
       description,
+      robots,
       openGraph: { title, description, type: "article" },
       twitter: { card: "summary_large_image", title, description },
     };
   } catch {
-    return { title: "Sonnet voters & rug report" };
+    return { title: "Sonnet voters & rug report", robots };
   }
 }
 
