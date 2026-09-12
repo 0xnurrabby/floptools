@@ -437,14 +437,22 @@ function buildShareText(report: Report, label: string): string {
   const level = report.risk.level;
   const blocks: string[] = [];
   const mentions = (report.mentions ?? []).map((m) => m.handle);
-  const mentionBlock = mentions.length
-    ? `Writers who put in the work, this concerns you:\n${mentions.join(" ")}`
-    : null;
+  const catchLine = level === "low" ? "Writers in this contest:" : "Writers who put in the work, this concerns you:";
+  const mentionBlock = mentions.length ? `${catchLine}\n${mentions.join(" ")}` : null;
 
   if (level === "low" || !e || report.votes === 0) {
+    if (report.votes === 0) {
+      blocks.push(
+        `Sonnet-2 "${label}": no counted ballots yet, coordination risk ${score}/100 (${level}).`,
+        "The ledger is open anyway. Every registration and ballot is public, so a missing result is visible, not hidden.",
+      );
+    } else {
+      blocks.push(
+        `Sonnet-2 "${label}" closed with ${report.votes} ballot${report.votes === 1 ? "" : "s"} and coordination risk ${score}/100 (${level}).`,
+        "No vote bursts, no shared request tags, no batch registrations. Just writers and readers showing up. This is what a clean, checkable result looks like.",
+      );
+    }
     blocks.push(
-      `Sonnet-2 "${label}" closed with ${report.votes} ballot${report.votes === 1 ? "" : "s"} and coordination risk ${score}/100 (${level}).`,
-      "No vote bursts, no shared request tags, no batch registrations. Just writers and readers showing up. This is what a clean, checkable result looks like.",
       "I built floptools.nurlab.xyz solo. Create a DID, register, write, vote. Every ballot lands in public and every entry gets a fairness report like this one.",
     );
   } else {
