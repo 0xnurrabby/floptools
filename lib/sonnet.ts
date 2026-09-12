@@ -149,6 +149,8 @@ export interface SonnetTeam {
 
 export interface SonnetOverview {
   updatedAt: string;
+  /** When this snapshot was computed (present on cached reads). */
+  cachedAt?: string;
   contest: {
     opening: number;
     deadline: number;
@@ -384,22 +386,153 @@ export async function refreshWriters(): Promise<WriterRefreshInfo> {
   return ingestWriters();
 }
 
+export interface MySonnetStatus {
+  did: string;
+  registered: { role: string; x: string | null } | null;
+  ballot: {
+    entryId: string;
+    requestId: string;
+    roomSeq: number;
+    ts: string;
+    status: "accepted" | "rejected" | "pending";
+    reason: string | null;
+  } | null;
+  entry: {
+    gameId: string;
+    entryId: string;
+    votes: number;
+    rank: number;
+    entries: number;
+    xPostIds: string[];
+  } | null;
+}
+
+/** The connected identity's own sonnet-2 status: registration + last ballot. */
+export async function mySonnetStatus(did: string): Promise<MySonnetStatus> {
+  const [regRows, voteMessages, overview] = await Promise.all([
+    safeQuery("SELECT role, x_account FROM sonnet_writers WHERE did = $1", [did]).catch(() => null),
+    readSonnetRoom(SONNET.rooms.votes).catch(() => [] as SonnetMessage[]),
+    loadSonnetOverview().catch(() => null),
+  ]);
+  const reg = regRows?.[0];
+  const registered = reg
+    ? { role: String(reg["role"] ?? ""), x: (reg["x_account"] as string) ?? null }
+    : null;
+
+  let last: { entryId: string; requestId: string; seq: number; ts: string } | null = null;
+  for (const m of voteMessages) {
+    if (m.from !== did) continue;
+    const o = json(m.text);
+    if (!o || str(o.type) !== "sonnet.ballot.v1") continue;
+    const entryId = str(o.entry_id);
+    const requestId = str(o.request_id);
+    if (!entryId || !requestId) continue;
+    if (!last || m.seq >= last.seq) last = { entryId, requestId, seq: m.seq, ts: m.ts };
+  }
+
+  let ballot: MySonnetStatus["ballot"] = null;
+  if (last) {
+    const receipts = parseReceipts(voteMessages);
+    const r = receipts.find((x) => x.requestId === last!.requestId && x.senderDid === did);
+    ballot = {
+      entryId: last.entryId,
+      requestId: last.requestId,
+      roomSeq: last.seq,
+      ts: last.ts,
+      status: r ? (r.reason ? "rejected" : "accepted") : "pending",
+      reason: r?.reason ?? null,
+    };
+  }
+
+  let entry: MySonnetStatus["entry"] = null;
+  if (ballot && overview) {
+    const ranked = overview.teams.filter((t) => t.entryId);
+    const idx = ranked.findIndex((t) => t.entryId === ballot!.entryId);
+    if (idx >= 0) {
+      const t = ranked[idx]!;
+      entry = {
+        gameId: t.gameId,
+        entryId: t.entryId!,
+        votes: t.votes,
+        rank: idx + 1,
+        entries: ranked.length,
+        xPostIds: t.xPostIds,
+      };
+    }
+  }
+
+  return { did, registered, ballot, entry };
+}
+
 /* ---------------- the aggregate ---------------- */
 
 let overviewCache: { at: number; data: SonnetOverview } | null = null;
 let overviewInflight: Promise<SonnetOverview> | null = null;
 const OVERVIEW_TTL_MS = 60_000;
+const DB_CACHE_KEY = "overview";
 
 export function sonnetOverviewCached(): SonnetOverview | null {
   return overviewCache?.data ?? null;
 }
 
+async function readDbSnapshot(): Promise<{ at: number; data: SonnetOverview } | null> {
+  const rows =
+    (await safeQuery("SELECT data, updated_at FROM sonnet_cache WHERE key = $1", [DB_CACHE_KEY])) ?? [];
+  const r = rows[0];
+  if (!r || !r["data"]) return null;
+  const at = r["updated_at"] ? Date.parse(String(r["updated_at"])) : 0;
+  const data = r["data"] as SonnetOverview;
+  if (!data || typeof data !== "object" || !Array.isArray(data.teams)) return null;
+  return { at, data: { ...data, cachedAt: Number.isFinite(at) ? new Date(at).toISOString() : undefined } };
+}
+
+async function writeDbSnapshot(data: SonnetOverview): Promise<void> {
+  await safeExec(
+    `INSERT INTO sonnet_cache (key, data, updated_at) VALUES ($1, $2::jsonb, now())
+     ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
+    [DB_CACHE_KEY, JSON.stringify(data)],
+  );
+}
+
+function rebuildSnapshot(): Promise<SonnetOverview> {
+  if (overviewInflight) return overviewInflight;
+  overviewInflight = buildOverview()
+    .then(async (data) => {
+      overviewCache = { at: Date.now(), data };
+      await writeDbSnapshot(data);
+      return data;
+    })
+    .finally(() => {
+      overviewInflight = null;
+    });
+  return overviewInflight;
+}
+
+/**
+ * Instant-first: a warm snapshot (DB or instance) is served immediately; a
+ * stale one is served while a fresh build runs in the background. `fresh:true`
+ * awaits the rebuild (Refresh button).
+ */
 export async function loadSonnetOverview(opts: { fresh?: boolean } = {}): Promise<SonnetOverview> {
-  if (!opts.fresh && overviewCache && Date.now() - overviewCache.at < OVERVIEW_TTL_MS) {
+  const now = Date.now();
+  if (!opts.fresh && overviewCache && now - overviewCache.at < OVERVIEW_TTL_MS) {
     return overviewCache.data;
   }
-  if (overviewInflight) return overviewInflight;
-  overviewInflight = (async () => {
+  if (opts.fresh) return rebuildSnapshot();
+
+  const dbCached = await readDbSnapshot().catch(() => null);
+  if (dbCached) {
+    overviewCache = { at: dbCached.at, data: dbCached.data };
+    if (now - dbCached.at >= OVERVIEW_TTL_MS) {
+      void rebuildSnapshot().catch(() => {});
+    }
+    return dbCached.data;
+  }
+  return rebuildSnapshot();
+}
+
+async function buildOverview(): Promise<SonnetOverview> {
+  return (async () => {
     const [rules, discovery, votes, submissions, writers] = await Promise.all([
       readSonnetRoom(SONNET.rooms.rules).catch(() => [] as SonnetMessage[]),
       readSonnetRoom(SONNET.rooms.discovery).catch(() => [] as SonnetMessage[]),
@@ -626,12 +759,8 @@ export async function loadSonnetOverview(opts: { fresh?: boolean } = {}): Promis
       },
       writersIndexed: writers.size,
     };
-    overviewCache = { at: Date.now(), data };
     return data;
-  })().finally(() => {
-    overviewInflight = null;
-  });
-  return overviewInflight;
+  })();
 }
 
 /** Rooms the live feed watches: shared rooms always, plus the busiest teams. */

@@ -159,6 +159,15 @@ export async function ensureSchema(): Promise<void> {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `);
+    // Sonnet-2 aggregate snapshot: pages load instantly from here while a
+    // stale snapshot rebuilds in the background.
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS sonnet_cache (
+        key TEXT PRIMARY KEY,
+        data JSONB NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
     await p.query(`
       CREATE TABLE IF NOT EXISTS ip_geo (
         ip TEXT PRIMARY KEY,

@@ -5,11 +5,7 @@ import Link from "next/link";
 import { Button, Card, Note, Spinner, StatusChip, TextInput } from "@/components/ui";
 import { LocalTime } from "@/components/local-time";
 import { useSession } from "@/components/use-session";
-import { signDraft } from "@/lib/keyring";
-import { getClient } from "@/lib/client";
-
-const VOTES_ROOM = "mb-sonnet-2-votes";
-const CONTEST = "sonnet-2";
+import { SonnetVoteDialog } from "@/components/sonnet-vote-dialog";
 
 interface Member {
   did: string;
@@ -50,10 +46,6 @@ function stanzaGroups(lines: string[]): string[][] {
   return groups;
 }
 
-function nowMs(): number {
-  return Date.now();
-}
-
 export default function SonnetVotePage() {
   const { did } = useSession();
   const [data, setData] = useState<Overview | null>(null);
@@ -61,8 +53,7 @@ export default function SonnetVotePage() {
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<Sort>("votes");
   const [query, setQuery] = useState("");
-  const [voteBusy, setVoteBusy] = useState<string | null>(null);
-  const [voteMsg, setVoteMsg] = useState<{ gameId: string; ok: boolean; text: string } | null>(null);
+  const [voteTarget, setVoteTarget] = useState<Team | null>(null);
   const [handlesLoading, setHandlesLoading] = useState(false);
 
   const load = useCallback((fresh = false) => {
@@ -108,47 +99,6 @@ export default function SonnetVotePage() {
     };
   }, [data]);
 
-  const castVote = async (team: Team) => {
-    if (!team.entryId) return;
-    if (!did) {
-      setVoteMsg({ gameId: team.gameId, ok: false, text: "Unlock an identity first (Create page) — the ballot must be signed by your DID." });
-      return;
-    }
-    setVoteBusy(team.gameId);
-    setVoteMsg(null);
-    try {
-      const requestId = `floptools-${did.slice(-6)}-${nowMs()}`;
-      const text = JSON.stringify({
-        type: "sonnet.ballot.v1",
-        contest_id: CONTEST,
-        voter_did: did,
-        entry_id: team.entryId,
-        request_id: requestId,
-      });
-      const draft = signDraft(VOTES_ROOM, text);
-      const res = await getClient().writeSigned({
-        room: VOTES_ROOM,
-        did: draft.did,
-        sig: draft.sig,
-        nonce: draft.nonce,
-        text: draft.sweptText,
-      });
-      if (res.status >= 200 && res.status < 300) {
-        setVoteMsg({
-          gameId: team.gameId,
-          ok: true,
-          text: `Ballot posted for ${team.entryId}. The referee receipt lands in the votes room shortly — your last valid ballot counts, and only registered pre-start voters are counted.`,
-        });
-      } else {
-        setVoteMsg({ gameId: team.gameId, ok: false, text: `Refused (HTTP ${res.status}). ${res.body.slice(0, 160)}` });
-      }
-    } catch (e) {
-      setVoteMsg({ gameId: team.gameId, ok: false, text: (e as Error).message });
-    } finally {
-      setVoteBusy(null);
-    }
-  };
-
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const list = (data?.teams ?? []).filter((t) => {
@@ -165,7 +115,9 @@ export default function SonnetVotePage() {
   }, [data, query, sort]);
 
   const entries = (data?.teams ?? []).filter((t) => t.entryId);
-  const explicit = sort === "votes" ? filtered : filtered.filter((t) => t.entryId);
+  // votes mode: entries in the main list, writing teams in their own section.
+  // other sorts: everything inline (no duplicates anywhere).
+  const explicit = sort === "votes" ? filtered.filter((t) => t.entryId) : filtered;
   const writing = sort === "votes" ? filtered.filter((t) => !t.entryId) : [];
 
   return (
@@ -342,22 +294,11 @@ export default function SonnetVotePage() {
                   </code>
                 ) : null}
                 {t.entryId ? (
-                  <Button
-                    variant="secondary"
-                    onClick={() => void castVote(t)}
-                    disabled={voteBusy !== null}
-                    className="ml-auto"
-                  >
-                    {voteBusy === t.gameId ? <Spinner label="…" /> : "Vote for this entry"}
+                  <Button variant="secondary" onClick={() => setVoteTarget(t)} className="ml-auto">
+                    Vote for this entry
                   </Button>
                 ) : null}
               </div>
-
-              {voteMsg?.gameId === t.gameId ? (
-                <div className="mt-3">
-                  <Note tone={voteMsg.ok ? "ok" : "error"}>{voteMsg.text}</Note>
-                </div>
-              ) : null}
             </Card>
           ))}
 
@@ -387,6 +328,17 @@ export default function SonnetVotePage() {
         ballot before the deadline is the one that counts. Polls and likes are not votes. Verify the
         referee DID in the official LAUNCH.md before trusting any receipt.
       </Note>
+
+      {voteTarget && voteTarget.entryId ? (
+        <SonnetVoteDialog
+          team={{ ...voteTarget, entryId: voteTarget.entryId }}
+          rank={entries.findIndex((e) => e.gameId === voteTarget.gameId) + 1 || null}
+          totalEntries={entries.length}
+          did={did}
+          onClose={() => setVoteTarget(null)}
+          onVoted={() => void load(true)}
+        />
+      ) : null}
     </div>
   );
 }
