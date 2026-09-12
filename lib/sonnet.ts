@@ -954,6 +954,27 @@ export interface VoterReportSignal {
   dids: string[];
 }
 
+export interface VoterReportSuspect {
+  did: string;
+  flags: string[];
+  /** How many independent signals flag this DID. */
+  hits: number;
+}
+
+export interface VoterReportEvidence {
+  clusterVotes: number;
+  clusterSecs: number;
+  sameTagBallots: number;
+  sameTag: string | null;
+  regBurstDids: number;
+  freshDids: number;
+}
+
+export interface VoterReportMention {
+  handle: string;
+  words: number;
+}
+
 export interface VoterReport {
   entryId: string;
   gameId: string | null;
@@ -965,7 +986,23 @@ export interface VoterReport {
   signals: VoterReportSignal[];
   risk: { score: number; level: "low" | "notable" | "high"; summary: string };
   span: { startMs: number; endMs: number };
+  /** The identity flagged hardest by the public analysis (signals, not proof). */
+  suspect: VoterReportSuspect | null;
+  /** Headline numbers for the share/expose text. */
+  evidence: VoterReportEvidence;
+  /** Top contest writers with a declared X account, for share mentions. */
+  mentions: VoterReportMention[];
   generatedAt: string;
+}
+
+/** Normalize a declared X account url into an @handle, or null. */
+function xHandle(raw: string): string | null {
+  const s = raw
+    .trim()
+    .replace(/^https?:\/\/(www\.)?(x|twitter)\.com\//i, "")
+    .replace(/^@/, "")
+    .split(/[/?#]/)[0] ?? "";
+  return /^[A-Za-z0-9_]{1,15}$/.test(s) ? `@${s}` : null;
 }
 
 /** The meaningful part of a request id: producer tag before the first number. */
@@ -1224,6 +1261,59 @@ export async function entryVoterReport(entryId: string): Promise<VoterReport> {
     endMs: times.length ? Math.max(...times) : Date.now(),
   };
 
+  // The identity flagged by the most independent signals (deterministic on ties).
+  const signalHits = new Map<string, number>();
+  for (const s of signals) for (const hitDid of new Set(s.dids)) signalHits.set(hitDid, (signalHits.get(hitDid) ?? 0) + 1);
+  let suspect: VoterReportSuspect | null = null;
+  let suspectScore = -1;
+  for (const v of voters) {
+    if (v.flags.length === 0) continue;
+    const h = signalHits.get(v.did) ?? 0;
+    const score2 = h * 10 + v.flags.length;
+    if (
+      score2 > suspectScore ||
+      (score2 === suspectScore && suspect !== null && v.did < suspect.did)
+    ) {
+      suspectScore = score2;
+      suspect = { did: v.did, flags: [...v.flags], hits: h };
+    }
+  }
+
+  const biggestCluster = tight.slice().sort((a, b) => b.length - a.length)[0] ?? null;
+  const biggestTag = [...byTag.entries()].sort((a, b) => b[1].length - a[1].length)[0] ?? null;
+  const biggestReg = regGroups.slice().sort((a, b) => b.length - a.length)[0] ?? null;
+  const evidence: VoterReportEvidence = {
+    clusterVotes: biggestCluster?.length ?? 0,
+    clusterSecs:
+      biggestCluster && biggestCluster.length >= 2
+        ? Math.round(
+            (Date.parse(biggestCluster[biggestCluster.length - 1]!.voteAt!) -
+              Date.parse(biggestCluster[0]!.voteAt!)) /
+              1000,
+          )
+        : 0,
+    sameTagBallots: biggestTag?.[1].length ?? 0,
+    sameTag: biggestTag?.[0] ?? null,
+    regBurstDids: biggestReg?.length ?? 0,
+    freshDids: fresh.length,
+  };
+
+  // Top declared X handles across the contest, excluding flagged voters and the
+  // reported entry's own team (the share text tags the rest of the field).
+  const flaggedDids = new Set(voters.filter((v) => v.flags.length > 0).map((v) => v.did));
+  const mentionMap = new Map<string, VoterReportMention>();
+  for (const t of overview?.teams ?? []) {
+    if (t.entryId === entryId) continue;
+    for (const m of t.members) {
+      if (!m.x || flaggedDids.has(m.did)) continue;
+      const handle = xHandle(m.x);
+      if (!handle) continue;
+      const prev = mentionMap.get(handle);
+      if (!prev || m.words > prev.words) mentionMap.set(handle, { handle, words: m.words });
+    }
+  }
+  const mentions = [...mentionMap.values()].sort((a, b) => b.words - a.words).slice(0, 28);
+
   const team = overview?.teams.find((t) => t.entryId === entryId) ?? null;
   const report: VoterReport = {
     entryId,
@@ -1235,6 +1325,9 @@ export async function entryVoterReport(entryId: string): Promise<VoterReport> {
     signals,
     risk: { score, level, summary },
     span,
+    suspect,
+    evidence,
+    mentions,
     generatedAt: new Date().toISOString(),
   };
   voterReportCache.set(entryId, { at: Date.now(), report });

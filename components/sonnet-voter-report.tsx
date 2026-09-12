@@ -62,6 +62,16 @@ interface Report {
   signals: Signal[];
   risk: { score: number; level: "low" | "notable" | "high"; summary: string };
   span: { startMs: number; endMs: number };
+  suspect?: { did: string; flags: string[]; hits: number } | null;
+  evidence?: {
+    clusterVotes: number;
+    clusterSecs: number;
+    sameTagBallots: number;
+    sameTag: string | null;
+    regBurstDids: number;
+    freshDids: number;
+  };
+  mentions?: { handle: string; words: number }[];
   generatedAt: string;
 }
 
@@ -415,6 +425,55 @@ function ChartLegend({ items, right }: { items: { color: string; label: string }
   );
 }
 
+/**
+ * The X post. High/notable risk entries get a real expose: the hook, the
+ * ledger numbers, the wallet flagged hardest, a fair-play message and the
+ * contest writers tagged at the bottom. Clean entries get a short, honest
+ * share. No em dashes, no filler.
+ */
+function buildShareText(report: Report, label: string): string {
+  const e = report.evidence;
+  const score = report.risk.score;
+  const level = report.risk.level;
+  const blocks: string[] = [];
+  const mentions = (report.mentions ?? []).map((m) => m.handle);
+  const mentionBlock = mentions.length
+    ? `Writers who put in the work, this concerns you:\n${mentions.join(" ")}`
+    : null;
+
+  if (level === "low" || !e || report.votes === 0) {
+    blocks.push(
+      `Sonnet-2 "${label}" closed with ${report.votes} ballot${report.votes === 1 ? "" : "s"} and coordination risk ${score}/100 (${level}).`,
+      "No vote bursts, no shared request tags, no batch registrations. Just writers and readers showing up. This is what a clean, checkable result looks like.",
+      "I built floptools.nurlab.xyz solo. Create a DID, register, write, vote. Every ballot lands in public and every entry gets a fairness report like this one.",
+    );
+  } else {
+    const flagWords = report.suspect ? report.suspect.flags.map((f) => FLAG_LABEL[f] ?? f).join(", ") : "";
+    const lines = [
+      e.sameTagBallots > 1
+        ? `- ${e.sameTagBallots} of ${report.votes} counted ballots carried the same request tag`
+        : null,
+      e.clusterVotes > 1 ? `- ${e.clusterVotes} votes landed inside ${e.clusterSecs} seconds` : null,
+      e.regBurstDids > 1 ? `- ${e.regBurstDids} voter DIDs registered back to back before the flood` : null,
+      `- coordination risk ${score}/100, level ${level}`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    blocks.push(
+      `🚨 ${report.votes} ballots. One script behind ${e.sameTagBallots || e.clusterVotes} of them.`,
+      `Sonnet-2 entry "${label}" did not win a fanbase. It got a script.`,
+      `Public ledger, right now:\n${lines}`,
+      report.suspect
+        ? `The wallet this analysis flags hardest: identity_${report.suspect.did.slice(-4)} (${flagWords}). Fresh identity, nothing written, hundreds of "supporters" arriving in lockstep.`
+        : `The pattern: fresh identities, nothing written, hundreds of "supporters" arriving in lockstep.`,
+      "To every writer who minted a DID, wrote real words and voted with their own hands: you did the work, and farming should not outrank it. Organizers, the receipts are public and they are not subtle. Rule on it.",
+      "I built floptools.nurlab.xyz solo. Create a DID, register, write, vote. Every ballot lands in public and every entry gets a fairness report like this one.",
+    );
+  }
+  if (mentionBlock) blocks.push(mentionBlock);
+  return blocks.join("\n\n");
+}
+
 export function SonnetVoterReport({
   entryId,
   gameId,
@@ -494,9 +553,7 @@ export function SonnetReportBody({
 
   const risk = report?.risk;
   const riskTone = risk?.level === "high" ? "error" : risk?.level === "notable" ? "warn" : "ok";
-  const shareText = report
-    ? `Sonnet-2 ${gameId ?? entryId}: ${report.votes} voter${report.votes === 1 ? "" : "s"}, coordination risk ${report.risk.score}/100 (${report.risk.level})`
-    : `Sonnet-2 voters & rug report — ${gameId ?? entryId}`;
+  const shareText = report ? buildShareText(report, gameId ?? entryId) : `Sonnet-2 voters & rug report for ${gameId ?? entryId}`;
 
   return (
     <>
