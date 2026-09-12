@@ -146,19 +146,6 @@ export async function ensureSchema(): Promise<void> {
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `);
-    // Pro-panel telemetry, kept apart from the app-wide stats so /proadmin
-    // and /admin never mix data.
-    await run(`
-      CREATE TABLE IF NOT EXISTS pro_events (
-        id BIGSERIAL PRIMARY KEY,
-        ip TEXT NOT NULL,
-        kind TEXT NOT NULL,
-        detail TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-      )
-    `);
-    await run(`CREATE INDEX IF NOT EXISTS idx_pro_events_created ON pro_events (created_at)`);
-    await run(`CREATE INDEX IF NOT EXISTS idx_pro_events_ip ON pro_events (ip)`);
     // Sonnet-2 writer registrations (public data) so pages can show each
     // writer's declared X account without rescanning the huge room each time.
     await run(`

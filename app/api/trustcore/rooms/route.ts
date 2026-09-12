@@ -3,8 +3,6 @@ import { contractFromDealRoom } from "@/lib/tclk";
 import { rememberDealRoom } from "@/lib/trustcore-db";
 import { safeExec, safeQuery } from "@/lib/db";
 import { clientIp } from "@/lib/server-ip";
-import { isProRequest } from "@/lib/pro-auth";
-import { recordProEvent } from "@/lib/pro-events";
 
 /**
  * POST /api/trustcore/rooms  {"room":"mb-p-tclk-<16 hex>"}
@@ -34,22 +32,18 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   // Bounded per IP: the deal page calls this once per contract; a spammer
-  // must not fill the table with junk names. Pro mode is exempt (logged).
-  if (isProRequest(req)) {
-    await recordProEvent(clientIp(req.headers), "limit_bypass", "rooms");
-  } else {
-    const ip = clientIp(req.headers);
-    const key = `tc:rooms:${ip}`;
-    const rows = await safeQuery(
-      "SELECT COUNT(*) AS n FROM task_events WHERE did = $1 AND created_at > now() - interval '10 minutes'",
-      [key],
-    );
-    const used = Number(rows?.[0]?.["n"] ?? 0);
-    if (used > 20) {
-      return NextResponse.json({ ok: false, error: "Too many room reports. Try again soon." }, { status: 429 });
-    }
-    await safeExec("INSERT INTO task_events (did, category) VALUES ($1, 'rooms')", [key]);
+  // must not fill the table with junk names.
+  const ip = clientIp(req.headers);
+  const key = `tc:rooms:${ip}`;
+  const rows = await safeQuery(
+    "SELECT COUNT(*) AS n FROM task_events WHERE did = $1 AND created_at > now() - interval '10 minutes'",
+    [key],
+  );
+  const used = Number(rows?.[0]?.["n"] ?? 0);
+  if (used > 20) {
+    return NextResponse.json({ ok: false, error: "Too many room reports. Try again soon." }, { status: 429 });
   }
+  await safeExec("INSERT INTO task_events (did, category) VALUES ($1, 'rooms')", [key]);
 
   await rememberDealRoom(room);
   return NextResponse.json({ ok: true });

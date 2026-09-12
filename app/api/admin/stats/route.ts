@@ -18,8 +18,7 @@ const ledgerCache = new Map<string, { active: boolean; at: number }>();
 let didListCache: { at: number; dids: Row[] } | null = null;
 
 function isAuthed(req: NextRequest): boolean {
-  // Admin panel only. /proadmin has its own, separate stats endpoint.
-  return verifySessionToken(req.cookies.get(ADMIN_COOKIE)?.value, "admin");
+  return verifySessionToken(req.cookies.get(ADMIN_COOKIE)?.value);
 }
 
 async function counts(sql: string, params: unknown[] = []): Promise<number> {
