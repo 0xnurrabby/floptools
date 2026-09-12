@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
@@ -66,7 +66,7 @@ interface Report {
 }
 
 function msGap(ms: number | null): string {
-  if (ms === null) return "â€”";
+  if (ms === null) return "—";
   if (ms < 60_000) return `${Math.max(1, Math.round(ms / 1000))}s`;
   const m = Math.round(ms / 60_000);
   if (m < 120) return `${m}m`;
@@ -101,8 +101,8 @@ function ActivityTimeline({ voter, entryId }: { voter: Voter; entryId: string })
                 registration
               </StatusChip>
               <span className="caption-sm text-body">
-                role <span className="font-mono">{e.reg.role}</span> Â· receipt {e.reg.receipt}
-                {e.reg.reason ? <span className="text-rose-600"> Â· {e.reg.reason}</span> : null}
+                role <span className="font-mono">{e.reg.role}</span> · receipt {e.reg.receipt}
+                {e.reg.reason ? <span className="text-rose-600"> · {e.reg.reason}</span> : null}
               </span>
             </>
           ) : (
@@ -114,11 +114,11 @@ function ActivityTimeline({ voter, entryId }: { voter: Voter; entryId: string })
               </StatusChip>
               <span className={`caption-sm ${e.ballot.entryId === entryId ? "font-semibold text-ink" : "text-body"}`}>
                 entry <span className="font-mono">{e.ballot.entryId}</span>
-                {e.ballot.entryId === entryId ? " Â· this entry" : ""}
+                {e.ballot.entryId === entryId ? " · this entry" : ""}
               </span>
               <span className="caption-sm text-mute">
                 {e.ballot.status}
-                {e.ballot.reason ? ` Â· ${e.ballot.reason}` : ""}
+                {e.ballot.reason ? ` · ${e.ballot.reason}` : ""}
               </span>
             </>
           )}
@@ -414,6 +414,7 @@ function ChartLegend({ items, right }: { items: { color: string; label: string }
     </div>
   );
 }
+
 export function SonnetVoterReport({
   entryId,
   gameId,
@@ -437,7 +438,7 @@ export function SonnetVoterReport({
   );
 }
 
-/** The report itself â€” used by the dialog and the standalone /sonnet/report page. */
+/** The report itself — used by the dialog and the standalone /sonnet/report page. */
 export function SonnetReportBody({
   entryId,
   gameId,
@@ -495,7 +496,7 @@ export function SonnetReportBody({
   const riskTone = risk?.level === "high" ? "error" : risk?.level === "notable" ? "warn" : "ok";
   const shareText = report
     ? `Sonnet-2 ${gameId ?? entryId}: ${report.votes} voter${report.votes === 1 ? "" : "s"}, coordination risk ${report.risk.score}/100 (${report.risk.level})`
-    : `Sonnet-2 voters & rug report â€” ${gameId ?? entryId}`;
+    : `Sonnet-2 voters & rug report — ${gameId ?? entryId}`;
 
   return (
     <>
@@ -504,7 +505,7 @@ export function SonnetReportBody({
             <p className="caption-sm text-mute">voters & rug report</p>
             <h2 className="heading-md mt-0.5">
               <span className="font-mono">{gameId ?? entryId}</span>{" "}
-              <span className="text-mute">Â· entry {entryId}</span>
+              <span className="text-mute">· entry {entryId}</span>
             </h2>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -515,7 +516,7 @@ export function SonnetReportBody({
                 href={url}
                 className="body-sm rounded-full border border-hairline bg-canvas px-3.5 py-2 text-ink transition-colors hover:bg-surface-soft"
               >
-                Open page â†—
+                Open page ↗
               </a>
             ) : null}
             {url && report ? (
@@ -525,7 +526,7 @@ export function SonnetReportBody({
                 rel="noopener noreferrer"
                 className="body-sm rounded-full border border-hairline-strong bg-canvas px-4 py-2 text-ink transition-colors hover:bg-surface-soft"
               >
-                Share on X â†—
+                Share on X ↗
               </a>
             ) : null}
             {onClose ? (
@@ -542,7 +543,7 @@ export function SonnetReportBody({
 
         {error ? <div className="mt-4"><Note tone="error">{error}</Note></div> : null}
         {!report && !error ? (
-          <div className="mt-8 flex justify-center"><Spinner label="Reading every ballot and registrationâ€¦" /></div>
+          <div className="mt-8 flex justify-center"><Spinner label="Reading every ballot and registration…" /></div>
         ) : null}
 
         {report ? (
@@ -560,7 +561,7 @@ export function SonnetReportBody({
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="body-sm-strong text-ink">Coordination signals</p>
                 <StatusChip tone={riskTone}>
-                  {risk?.level === "high" ? "high" : risk?.level === "notable" ? "notable" : "low"} Â· {risk?.score}/100
+                  {risk?.level === "high" ? "high" : risk?.level === "notable" ? "notable" : "low"} · {risk?.score}/100
                 </StatusChip>
               </div>
               <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/60">
@@ -608,7 +609,7 @@ export function SonnetReportBody({
                           className="rounded-full border border-hairline bg-canvas px-2.5 py-0.5 font-mono text-[11px] text-body hover:border-brand-500/40 hover:text-brand-700"
                           title={d}
                         >
-                          â€¦{d.slice(-6)}
+                          …{d.slice(-6)}
                         </Link>
                       ))}
                     </div>
@@ -621,9 +622,9 @@ export function SonnetReportBody({
             {report.words.length > 0 ? (
               <div className="rounded-[14px] border border-hairline bg-surface-card p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="body-sm-strong text-ink">Poem activity â€” who wrote what, when</p>
+                  <p className="body-sm-strong text-ink">Poem activity — who wrote what, when</p>
                   <span className="caption-sm text-mute">
-                    {report.words.length} accepted words Â· {report.poemRoom}
+                    {report.words.length} accepted words · {report.poemRoom}
                   </span>
                 </div>
                 <div className="mt-2 max-h-64 space-y-1 overflow-y-auto pr-1">
@@ -638,7 +639,7 @@ export function SonnetReportBody({
                         className="w-[86px] shrink-0 font-mono text-[11px] text-body hover:text-brand-700"
                         title={w.by}
                       >
-                        â€¦{w.by.slice(-6)}
+                        …{w.by.slice(-6)}
                       </Link>
                       <span className="font-mono font-medium text-ink">{w.word}</span>
                       {w.ts ? (
@@ -683,7 +684,7 @@ export function SonnetReportBody({
                               className="mr-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full border border-hairline bg-canvas text-[10px] text-body hover:bg-surface-soft"
                               aria-label={expanded.has(v.did) ? "Hide activity" : "Show full activity"}
                             >
-                              {expanded.has(v.did) ? "âˆ’" : "+"}
+                              {expanded.has(v.did) ? "−" : "+"}
                             </button>
                             <Link
                               href={`/trustcore/${encodeURIComponent(v.did)}`}
@@ -697,7 +698,7 @@ export function SonnetReportBody({
                             {v.regTs ? (
                               <>
                                 <LocalTime value={v.regTs} timeStyle="medium" />
-                                {v.regSeq !== null ? <span className="text-mute"> Â· seq {v.regSeq}</span> : null}
+                                {v.regSeq !== null ? <span className="text-mute"> · seq {v.regSeq}</span> : null}
                               </>
                             ) : (
                               <span className="text-mute">not in retained registrations</span>
@@ -709,7 +710,7 @@ export function SonnetReportBody({
                                 {v.regReceipt}
                               </StatusChip>
                             ) : (
-                              <span className="text-mute">â€”</span>
+                              <span className="text-mute">—</span>
                             )}
                           </td>
                           <td className="px-3 py-2 text-body">
@@ -717,7 +718,7 @@ export function SonnetReportBody({
                           </td>
                           <td className="px-3 py-2 text-body">{msGap(v.regToVoteMs)}</td>
                           <td className="px-3 py-2">
-                            <span className="font-mono text-[11px] text-body">{v.tag || "â€”"}</span>
+                            <span className="font-mono text-[11px] text-body">{v.tag || "—"}</span>
                           </td>
                           <td className="px-3 py-2">
                             <span className="flex flex-wrap gap-1">
@@ -736,7 +737,7 @@ export function SonnetReportBody({
                         {expanded.has(v.did) ? (
                           <tr className="border-b border-hairline bg-canvas/70">
                             <td colSpan={7} className="px-3 py-3">
-                              <p className="caption-sm font-medium text-ink">Full activity Â· identity_{v.did.slice(-4)}</p>
+                              <p className="caption-sm font-medium text-ink">Full activity · identity_{v.did.slice(-4)}</p>
                               <div className="mt-2">
                                 <ActivityTimeline voter={v} entryId={entryId} />
                               </div>
@@ -754,7 +755,7 @@ export function SonnetReportBody({
             <Note tone="info">
               Signals come from public data only: each DID&apos;s registration slot and time, the ballot
               arrival order and the request-id tag the voter&apos;s tool chose. Tight timing can also
-              happen in an honest campaign, and one operator may legitimately run several agents â€” these
+              happen in an honest campaign, and one operator may legitimately run several agents — these
               are markers to inspect, not proof. The referee judges conduct cases. Report generated{" "}
               <LocalTime value={report.generatedAt} timeStyle="medium" />.
             </Note>
