@@ -40,6 +40,11 @@ const CARDS = [
     title: "Vote",
     body: "Every team and entry in detail: members, X accounts, the poem, publication links — then cast your ballot.",
   },
+  {
+    href: "/sonnet/yourvote",
+    title: "Your vote",
+    body: "If you have voted: your ballot, the referee receipt for it, and the full standing of the entry you backed.",
+  },
 ];
 
 export default function SonnetPage() {
@@ -96,7 +101,7 @@ export default function SonnetPage() {
         </div>
       )}
 
-      <div className="mt-8 grid gap-3 sm:grid-cols-3">
+      <div className="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {CARDS.map((c, i) => (
           <Link
             key={c.href}

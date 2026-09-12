@@ -139,9 +139,17 @@ export default function SonnetVotePage() {
             ) : null}
           </p>
         </div>
-        <Button variant="secondary" onClick={() => void load(true)} disabled={busy}>
-          {busy ? <Spinner label="…" /> : "Refresh"}
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href="/sonnet/yourvote"
+            className="body-sm rounded-full border border-hairline bg-canvas px-4 py-2 text-ink transition-colors hover:border-brand-500/40 hover:bg-tint-brand hover:text-brand-700"
+          >
+            Your vote →
+          </Link>
+          <Button variant="secondary" onClick={() => void load(true)} disabled={busy}>
+            {busy ? <Spinner label="…" /> : "Refresh"}
+          </Button>
+        </div>
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-2">

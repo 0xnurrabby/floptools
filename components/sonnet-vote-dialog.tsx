@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { Button, Note, Spinner, StatusChip } from "@/components/ui";
 import { signDraft } from "@/lib/keyring";
 import { getClient } from "@/lib/client";
@@ -427,6 +428,13 @@ export function SonnetVoteDialog({
 
             <div className="mt-4 flex flex-wrap justify-end gap-2">
               <Button variant="secondary" onClick={() => void fetchMe()}>Refresh status</Button>
+              <Link
+                href="/sonnet/yourvote"
+                onClick={onClose}
+                className="body-sm inline-flex items-center rounded-full border border-hairline bg-canvas px-4 py-2 text-ink transition-colors hover:border-brand-500/40 hover:bg-tint-brand hover:text-brand-700"
+              >
+                Full vote details →
+              </Link>
               <Button onClick={onClose}>Done</Button>
             </div>
           </div>

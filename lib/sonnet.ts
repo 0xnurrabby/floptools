@@ -179,6 +179,7 @@ interface RefereeReceipt {
   version?: number;
   complete?: boolean;
   intakeSeq?: number;
+  receivedAt?: number;
   rosterReady?: boolean;
   eligibility?: string;
 }
@@ -202,6 +203,7 @@ function parseReceipts(messages: SonnetMessage[]): RefereeReceipt[] {
         version: typeof o.version === "number" ? o.version : undefined,
         complete: typeof o.complete === "boolean" ? o.complete : undefined,
         intakeSeq: typeof o.intake_seq === "number" ? o.intake_seq : undefined,
+        receivedAt: typeof o.received_at === "number" ? o.received_at : undefined,
         rosterReady: typeof o.roster_ready === "boolean" ? o.roster_ready : undefined,
         eligibility: str(o.eligibility) || undefined,
       });
@@ -386,17 +388,41 @@ export async function refreshWriters(): Promise<WriterRefreshInfo> {
   return ingestWriters();
 }
 
+export interface MyBallot {
+  entryId: string;
+  requestId: string;
+  roomSeq: number;
+  ts: string;
+  status: "accepted" | "rejected" | "pending";
+  reason: string | null;
+  receiptAt: string | null;
+  intakeSeq: number | null;
+}
+
+export interface MyEntryDetail {
+  gameId: string;
+  entryId: string;
+  poemRoom: string;
+  members: { did: string; x: string | null; words: number }[];
+  lines: string[];
+  complete: boolean;
+  wordCount: number;
+  eligibility: string | null;
+  xPostIds: string[];
+  poemSha256: string | null;
+  votes: number;
+  rank: number;
+  entries: number;
+  lastAt: string;
+}
+
 export interface MySonnetStatus {
   did: string;
   registered: { role: string; x: string | null } | null;
-  ballot: {
-    entryId: string;
-    requestId: string;
-    roomSeq: number;
-    ts: string;
-    status: "accepted" | "rejected" | "pending";
-    reason: string | null;
-  } | null;
+  /** The effective (latest) ballot — the one that counts. */
+  ballot: MyBallot | null;
+  /** Every ballot this DID has cast, newest first. */
+  history: MyBallot[];
   entry: {
     gameId: string;
     entryId: string;
@@ -405,9 +431,10 @@ export interface MySonnetStatus {
     entries: number;
     xPostIds: string[];
   } | null;
+  entryDetail: MyEntryDetail | null;
 }
 
-/** The connected identity's own sonnet-2 status: registration + last ballot. */
+/** The connected identity's own sonnet-2 status: registration + ballots. */
 export async function mySonnetStatus(did: string): Promise<MySonnetStatus> {
   const [regRows, voteMessages, overview] = await Promise.all([
     safeQuery("SELECT role, x_account FROM sonnet_writers WHERE did = $1", [did]).catch(() => null),
@@ -419,7 +446,8 @@ export async function mySonnetStatus(did: string): Promise<MySonnetStatus> {
     ? { role: String(reg["role"] ?? ""), x: (reg["x_account"] as string) ?? null }
     : null;
 
-  let last: { entryId: string; requestId: string; seq: number; ts: string } | null = null;
+  const receipts = parseReceipts(voteMessages);
+  const mine: MyBallot[] = [];
   for (const m of voteMessages) {
     if (m.from !== did) continue;
     const o = json(m.text);
@@ -427,27 +455,26 @@ export async function mySonnetStatus(did: string): Promise<MySonnetStatus> {
     const entryId = str(o.entry_id);
     const requestId = str(o.request_id);
     if (!entryId || !requestId) continue;
-    if (!last || m.seq >= last.seq) last = { entryId, requestId, seq: m.seq, ts: m.ts };
-  }
-
-  let ballot: MySonnetStatus["ballot"] = null;
-  if (last) {
-    const receipts = parseReceipts(voteMessages);
-    const r = receipts.find((x) => x.requestId === last!.requestId && x.senderDid === did);
-    ballot = {
-      entryId: last.entryId,
-      requestId: last.requestId,
-      roomSeq: last.seq,
-      ts: last.ts,
+    const r = receipts.find((x) => x.requestId === requestId && x.senderDid === did);
+    mine.push({
+      entryId,
+      requestId,
+      roomSeq: m.seq,
+      ts: m.ts,
       status: r ? (r.reason ? "rejected" : "accepted") : "pending",
       reason: r?.reason ?? null,
-    };
+      receiptAt: r?.receivedAt ? new Date(r.receivedAt * 1000).toISOString() : null,
+      intakeSeq: r?.intakeSeq ?? null,
+    });
   }
+  mine.sort((a, b) => b.roomSeq - a.roomSeq);
+  const ballot = mine[0] ?? null;
 
   let entry: MySonnetStatus["entry"] = null;
+  let entryDetail: MyEntryDetail | null = null;
   if (ballot && overview) {
     const ranked = overview.teams.filter((t) => t.entryId);
-    const idx = ranked.findIndex((t) => t.entryId === ballot!.entryId);
+    const idx = ranked.findIndex((t) => t.entryId === ballot.entryId);
     if (idx >= 0) {
       const t = ranked[idx]!;
       entry = {
@@ -458,10 +485,26 @@ export async function mySonnetStatus(did: string): Promise<MySonnetStatus> {
         entries: ranked.length,
         xPostIds: t.xPostIds,
       };
+      entryDetail = {
+        gameId: t.gameId,
+        entryId: t.entryId!,
+        poemRoom: t.poemRoom,
+        members: t.members,
+        lines: t.lines,
+        complete: t.complete,
+        wordCount: t.wordCount,
+        eligibility: t.eligibility,
+        xPostIds: t.xPostIds,
+        poemSha256: t.poemSha256,
+        votes: t.votes,
+        rank: idx + 1,
+        entries: ranked.length,
+        lastAt: t.lastAt,
+      };
     }
   }
 
-  return { did, registered, ballot, entry };
+  return { did, registered, ballot, history: mine, entry, entryDetail };
 }
 
 /* ---------------- the aggregate ---------------- */
