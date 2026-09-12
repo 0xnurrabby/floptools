@@ -209,6 +209,10 @@ export async function ensureSchema(): Promise<void> {
         request_id TEXT
       )
     `);
+    // The votes room restarts its seq on each generation, so seq is NOT a
+    // unique key across history — request_id is. Migrate the old PK away.
+    await run(`ALTER TABLE sonnet_ballots DROP CONSTRAINT IF EXISTS sonnet_ballots_pkey`);
+    await run(`ALTER TABLE sonnet_ballots ADD CONSTRAINT sonnet_ballots_request_key UNIQUE (request_id)`);
     await run(`CREATE INDEX IF NOT EXISTS idx_sonnet_ballots_did ON sonnet_ballots (did)`);
     await run(`CREATE INDEX IF NOT EXISTS idx_sonnet_ballots_request ON sonnet_ballots (request_id)`);
     await run(`

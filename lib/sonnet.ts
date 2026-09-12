@@ -401,9 +401,11 @@ async function persistBallots(messages: SonnetMessage[]): Promise<void> {
       const k = j * 5;
       return `($${k + 1},$${k + 2},$${k + 3},$${k + 4},$${k + 5})`;
     });
+    // Targetless ON CONFLICT: tolerates whichever unique key exists (seq
+    // historically, request_id now) without failing the chunk.
     await safeExec(
       `INSERT INTO sonnet_ballots (seq, ts, did, entry_id, request_id)
-       VALUES ${ph.join(",")} ON CONFLICT (seq) DO NOTHING`,
+       VALUES ${ph.join(",")} ON CONFLICT DO NOTHING`,
       values,
     );
   }
@@ -447,8 +449,10 @@ export async function ballotsForDid(did: string): Promise<StoredBallot[]> {
   ]);
   const byReq = new Map<string, Row>();
   for (const r of receiptRows ?? []) byReq.set(String(r["request_id"] ?? ""), r);
+  const seen = new Map<string, Row>();
+  for (const b of ballotRows ?? []) seen.set(String(b["request_id"] ?? ""), b);
   const out: StoredBallot[] = [];
-  for (const b of ballotRows ?? []) {
+  for (const b of seen.values()) {
     const requestId = String(b["request_id"] ?? "");
     const r = byReq.get(requestId);
     const reason = r ? String(r["reason"] ?? "") : null;
@@ -483,9 +487,13 @@ export async function ballotEventsForDids(dids: string[]): Promise<Map<string, S
        ORDER BY b.seq ASC`,
       [dids.slice(0, 500)],
     )) ?? [];
+  const seen = new Set<string>();
   for (const r of rows) {
     const did = String(r["did"] ?? "");
     if (!did) continue;
+    const key = `${did}|${String(r["request_id"] ?? "")}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     const hasReceipt = r["reason"] !== null && r["reason"] !== undefined;
     const reason = hasReceipt ? String(r["reason"] ?? "") : null;
     const list = map.get(did) ?? [];
