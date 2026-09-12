@@ -32,6 +32,12 @@ export interface VoteDialogTeam {
 interface MeStatus {
   did: string;
   registered: { role: string; x: string | null } | null;
+  registrationReceipt: {
+    status: "accepted" | "rejected" | "pending";
+    reason: string | null;
+    at: string | null;
+    requestId: string;
+  } | null;
   ballot: {
     entryId: string;
     requestId: string;
@@ -62,11 +68,21 @@ function stanzaGroups(lines: string[]): string[][] {
   return groups;
 }
 
-function roleChip(role: string | null | undefined) {
-  if (role === "voter") return <StatusChip tone="ok">registered voter</StatusChip>;
+function roleChip(
+  role: string | null | undefined,
+  receipt: MeStatus["registrationReceipt"] | undefined,
+) {
+  if (!role) return <StatusChip tone="empty">not in retained registrations</StatusChip>;
+  if (receipt?.status === "accepted" && role === "voter") {
+    return <StatusChip tone="ok">registered voter · receipted</StatusChip>;
+  }
+  if (receipt?.status === "rejected") {
+    return <StatusChip tone="error">registration refused{receipt.reason ? ` · ${receipt.reason}` : ""}</StatusChip>;
+  }
+  if (role === "voter") return <StatusChip tone="warn">registration posted · awaiting receipt</StatusChip>;
   if (role === "writer") return <StatusChip tone="warn">registered writer · cannot vote</StatusChip>;
   if (role === "organizer") return <StatusChip tone="warn">registered organizer · cannot vote</StatusChip>;
-  return <StatusChip tone="empty">not in retained registrations</StatusChip>;
+  return <StatusChip tone="empty">{role}</StatusChip>;
 }
 
 /**
@@ -252,7 +268,7 @@ export function SonnetVoteDialog({
                 <div className="rounded-[12px] border border-hairline bg-surface-card p-4">
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="body-sm-strong text-ink">identity_{did.slice(-4)}</p>
-                    {meBusy && !me ? <Spinner label="checking…" /> : roleChip(role)}
+                    {meBusy && !me ? <Spinner label="checking…" /> : roleChip(role, me?.registrationReceipt)}
                   </div>
                   <p className="mt-1 break-all font-mono text-[12px] text-mute">{did}</p>
                   {me?.registered?.x ? (

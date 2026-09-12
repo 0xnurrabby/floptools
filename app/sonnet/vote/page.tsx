@@ -14,6 +14,12 @@ const CONTEST_ID = "sonnet-2";
 
 interface MyStatus {
   registered: { role: string; x: string | null } | null;
+  registrationReceipt: {
+    status: "accepted" | "rejected" | "pending";
+    reason: string | null;
+    at: string | null;
+    requestId: string;
+  } | null;
   ballot: { entryId: string; status: "accepted" | "rejected" | "pending"; reason: string | null } | null;
   entry: { gameId: string; entryId: string; votes: number; rank: number; entries: number } | null;
 }
@@ -237,12 +243,20 @@ export default function SonnetVotePage() {
             <div className="min-w-0">
               <p className="body-sm-strong text-ink">Your voter status · identity_{did.slice(-4)}</p>
               <div className="mt-1 flex flex-wrap items-center gap-2">
-                {role === "voter" ? (
-                  <StatusChip tone="ok">registered voter · ready to vote</StatusChip>
-                ) : role ? (
-                  <StatusChip tone="warn">registered {role} · cannot vote</StatusChip>
-                ) : (
+                {!myStatus ? (
+                  <StatusChip tone="empty">checking registration…</StatusChip>
+                ) : !role ? (
                   <StatusChip tone="empty">not registered yet</StatusChip>
+                ) : myStatus.registrationReceipt?.status === "accepted" && role === "voter" ? (
+                  <StatusChip tone="ok">registered voter · ready to vote</StatusChip>
+                ) : myStatus.registrationReceipt?.status === "rejected" ? (
+                  <StatusChip tone="error">
+                    registration refused{myStatus.registrationReceipt.reason ? ` · ${myStatus.registrationReceipt.reason}` : ""}
+                  </StatusChip>
+                ) : role === "voter" ? (
+                  <StatusChip tone="warn">voter registration posted · awaiting referee receipt</StatusChip>
+                ) : (
+                  <StatusChip tone="warn">registered {role} · cannot vote</StatusChip>
                 )}
                 {myVote ? (
                   <span className="caption-sm text-body">

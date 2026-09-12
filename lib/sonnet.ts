@@ -423,6 +423,13 @@ export interface MyEntryDetail {
 export interface MySonnetStatus {
   did: string;
   registered: { role: string; x: string | null } | null;
+  /** The referee receipt for this DID's registration (from the room itself). */
+  registrationReceipt: {
+    status: "accepted" | "rejected" | "pending";
+    reason: string | null;
+    at: string | null;
+    requestId: string;
+  } | null;
   /** The effective (latest) ballot — the one that counts. */
   ballot: MyBallot | null;
   /** Every ballot this DID has cast, newest first. */
@@ -440,15 +447,51 @@ export interface MySonnetStatus {
 
 /** The connected identity's own sonnet-2 status: registration + ballots. */
 export async function mySonnetStatus(did: string): Promise<MySonnetStatus> {
-  const [regRows, voteMessages, overview] = await Promise.all([
+  const [regRows, regMessages, voteMessages, overview] = await Promise.all([
     safeQuery("SELECT role, x_account FROM sonnet_writers WHERE did = $1", [did]).catch(() => null),
+    readSonnetRoom(SONNET.rooms.registration).catch(() => [] as SonnetMessage[]),
     readSonnetRoom(SONNET.rooms.votes).catch(() => [] as SonnetMessage[]),
     loadSonnetOverview().catch(() => null),
   ]);
+
+  // Registration straight from the room (fresher than the DB index), plus the
+  // referee receipt for it.
+  let myReg: { requestId: string; role: string; x: string | null; seq: number } | null = null;
+  for (const m of regMessages) {
+    if (m.from !== did) continue;
+    const o = json(m.text);
+    if (!o || str(o.type) !== "sonnet.register.v1") continue;
+    const requestId = str(o.request_id);
+    const role = str(o.role);
+    if (!requestId || !role) continue;
+    if (!myReg || m.seq >= myReg.seq) {
+      myReg = {
+        requestId,
+        role,
+        x: role === "writer" ? str(o.x_account_url) || null : null,
+        seq: m.seq,
+      };
+    }
+  }
+  let registrationReceipt: MySonnetStatus["registrationReceipt"] = null;
+  if (myReg) {
+    const r = parseReceipts(regMessages).find(
+      (x) => x.requestId === myReg!.requestId && x.senderDid === did,
+    );
+    registrationReceipt = {
+      requestId: myReg.requestId,
+      status: r ? (r.reason ? "rejected" : "accepted") : "pending",
+      reason: r?.reason ?? null,
+      at: r?.receivedAt ? new Date(r.receivedAt * 1000).toISOString() : null,
+    };
+  }
+
   const reg = regRows?.[0];
-  const registered = reg
-    ? { role: String(reg["role"] ?? ""), x: (reg["x_account"] as string) ?? null }
-    : null;
+  const registered = myReg
+    ? { role: myReg.role, x: myReg.x }
+    : reg
+      ? { role: String(reg["role"] ?? ""), x: (reg["x_account"] as string) ?? null }
+      : null;
 
   const receipts = parseReceipts(voteMessages);
   const mine: MyBallot[] = [];
@@ -508,7 +551,13 @@ export async function mySonnetStatus(did: string): Promise<MySonnetStatus> {
     }
   }
 
-  return { did, registered, ballot, history: mine, entry, entryDetail };
+  return { did, registered, registrationReceipt, ballot, history: mine, entry, entryDetail };
+}
+
+/** Force a fresh registration-room read (used right after registering). */
+export async function refreshRegistration(): Promise<void> {
+  await readSonnetRoom(SONNET.rooms.registration, { fresh: true });
+  void ingestWriters();
 }
 
 /* ---------------- the aggregate ---------------- */
