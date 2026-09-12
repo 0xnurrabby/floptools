@@ -1298,11 +1298,11 @@ export async function entryVoterReport(entryId: string): Promise<VoterReport> {
     freshDids: fresh.length,
   };
 
-  // The accounts to tag: writers of the other ranked entries (the people
-  // behind the submitted X posts), most productive first, then the rest of
-  // their teammates with a declared account. Never flagged wallets or the
-  // reported entry's own team. Handles come from the sonnet_writers DB index
-  // so a cold instance still tags correctly.
+  // The accounts to tag: every ranked entry's writers with a declared
+  // account (including the reported entry's own team, whose writers should
+  // see this too), most productive first. Never flagged wallets. Handles
+  // come from the sonnet_writers DB index so a cold instance still tags
+  // correctly.
   const flaggedDids = new Set(voters.filter((v) => v.flags.length > 0).map((v) => v.did));
   const writerRows = await safeQuery(
     "SELECT did, x_account FROM sonnet_writers WHERE x_account IS NOT NULL AND x_account <> ''",
@@ -1314,7 +1314,7 @@ export async function entryVoterReport(entryId: string): Promise<VoterReport> {
     if (did && account) xByDid.set(did, account);
   }
   const candidates = (overview?.teams ?? [])
-    .filter((t) => t.entryId && t.entryId !== entryId)
+    .filter((t) => t.entryId)
     .flatMap((t) => t.members)
     .sort((a, b) => b.words - a.words);
   const mentionMap = new Map<string, VoterReportMention>();
