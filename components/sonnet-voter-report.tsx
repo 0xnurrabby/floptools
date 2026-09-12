@@ -72,6 +72,7 @@ interface Report {
     freshDids: number;
   };
   mentions?: { handle: string; words: number }[];
+  authors?: { handle: string; words: number }[];
   generatedAt: string;
 }
 
@@ -441,16 +442,18 @@ function buildShareText(report: Report, label: string): string {
   const mentions = (report.mentions ?? []).map((m) => m.handle);
   const catchLine = level === "low" ? "Writers in this contest:" : "Sonnet-2 writers, this concerns you:";
   const mentionBlock = mentions.length ? `${catchLine}\n${mentions.join(" ")}` : null;
+  const authors = report.authors ?? [];
+  const authorTag = authors.length ? ` (${authors.map((a) => a.handle).slice(0, 2).join(", ")})` : "";
 
   if (level === "low" || !e || report.votes === 0) {
     if (report.votes === 0) {
       blocks.push(
-        `Sonnet-2 is Flop's community poetry contest on Technocore. Entry "${label}" has no counted ballots yet.`,
+        `Sonnet-2 is Flop's community poetry contest on Technocore. Entry "${label}"${authorTag} has no counted ballots yet.`,
         "The ledger is open anyway. Every registration and ballot is public, so a missing result is visible, not hidden.",
       );
     } else {
       blocks.push(
-        `Sonnet-2 is Flop's community poetry contest on Technocore. Entry "${label}" closed with ${report.votes} ballot${report.votes === 1 ? "" : "s"}, coordination risk ${score}/100 (${level}).`,
+        `Sonnet-2 is Flop's community poetry contest on Technocore. Entry "${label}"${authorTag} closed with ${report.votes} ballot${report.votes === 1 ? "" : "s"}, coordination risk ${score}/100 (${level}).`,
         "No vote bursts, no shared request tags, no batch registrations. A clean result where every ballot is checkable.",
       );
     }
@@ -472,7 +475,7 @@ function buildShareText(report: Report, label: string): string {
       .join("\n");
     blocks.push(
       `🚨 The Sonnet-2 poetry contest got farmed, and the receipts are public.`,
-      `Flop's community contest on Technocore logs every ballot on an open ledger. Entry "${label}" pulled ${report.votes} votes, and ${e.sameTagBallots || e.clusterVotes} of them carried the same request tag. ${e.clusterVotes} landed inside ${e.clusterSecs} seconds (about ${mins} minutes). ${e.regBurstDids} wallet DIDs registered back to back before the flood.`,
+      `Flop's community contest on Technocore logs every ballot on an open ledger. Entry "${label}"${authorTag} pulled ${report.votes} votes, and ${e.sameTagBallots || e.clusterVotes} of them carried the same request tag. ${e.clusterVotes} landed inside ${e.clusterSecs} seconds (about ${mins} minutes). ${e.regBurstDids} wallet DIDs registered back to back before the flood.`,
       `Public ledger, right now:\n${lines}`,
       report.suspect
         ? `Prime suspect: identity_${report.suspect.did.slice(-4)} (${flagWords}). No poem, no history, hundreds of "supporters" arriving in lockstep.`
@@ -574,6 +577,19 @@ export function SonnetReportBody({
             <h2 className="heading-md mt-0.5">
               <span className="font-mono">{gameId ?? entryId}</span>{" "}
               <span className="text-mute">· entry {entryId}</span>
+              {(report?.authors ?? []).map((a, i) => (
+                <Fragment key={a.handle}>
+                  <span className="text-mute">{i === 0 ? " · " : ", "}</span>
+                  <a
+                    href={`https://x.com/${a.handle.replace(/^@/, "")}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[15px] font-medium text-brand-600 underline underline-offset-2"
+                  >
+                    {a.handle}
+                  </a>
+                </Fragment>
+              ))}
             </h2>
           </div>
           <div className="flex flex-wrap items-center gap-2">

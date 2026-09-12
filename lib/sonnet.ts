@@ -975,6 +975,11 @@ export interface VoterReportMention {
   words: number;
 }
 
+export interface VoterReportAuthor {
+  handle: string;
+  words: number;
+}
+
 export interface VoterReport {
   entryId: string;
   gameId: string | null;
@@ -992,6 +997,8 @@ export interface VoterReport {
   evidence: VoterReportEvidence;
   /** Top contest writers with a declared X account, for share mentions. */
   mentions: VoterReportMention[];
+  /** The reported entry's own declared X accounts (its writers). */
+  authors: VoterReportAuthor[];
   generatedAt: string;
 }
 
@@ -1298,12 +1305,10 @@ export async function entryVoterReport(entryId: string): Promise<VoterReport> {
     freshDids: fresh.length,
   };
 
-  // The accounts to tag: contest writers with a declared X account, most
-  // productive first (this naturally covers the ranked entries' submitted
-  // posts, then the wider field up to 30 distinct handles). Never flagged
-  // wallets. Handles come from the sonnet_writers DB index so a cold
-  // instance still tags correctly.
-  const flaggedDids = new Set(voters.filter((v) => v.flags.length > 0).map((v) => v.did));
+  const team = overview?.teams.find((t) => t.entryId === entryId) ?? null;
+
+  // Handles come from the sonnet_writers DB index so a cold instance still
+  // resolves declared X accounts.
   const writerRows = await safeQuery(
     "SELECT did, x_account FROM sonnet_writers WHERE x_account IS NOT NULL AND x_account <> ''",
   ).catch(() => null);
@@ -1313,6 +1318,25 @@ export async function entryVoterReport(entryId: string): Promise<VoterReport> {
     const account = String(row["x_account"] ?? "");
     if (did && account) xByDid.set(did, account);
   }
+
+  // The entry's own declared X accounts: shown next to the entry name in the
+  // report and the share text, and never repeated in the tag list.
+  const authorMap = new Map<string, VoterReportAuthor>();
+  for (const m of (team?.members ?? []).slice().sort((a, b) => b.words - a.words)) {
+    const rawAccount = xByDid.get(m.did) ?? m.x;
+    if (!rawAccount) continue;
+    const handle = xHandle(rawAccount);
+    if (!handle || authorMap.has(handle)) continue;
+    authorMap.set(handle, { handle, words: m.words });
+  }
+  const authors = [...authorMap.values()];
+  const authorHandles = new Set(authors.map((a) => a.handle));
+
+  // The accounts to tag: contest writers with a declared X account, most
+  // productive first (this naturally covers the ranked entries' submitted
+  // posts, then the wider field up to 30 distinct handles). Never flagged
+  // wallets.
+  const flaggedDids = new Set(voters.filter((v) => v.flags.length > 0).map((v) => v.did));
   const candidates = (overview?.teams ?? [])
     .flatMap((t) => t.members)
     .sort((a, b) => b.words - a.words);
@@ -1322,12 +1346,11 @@ export async function entryVoterReport(entryId: string): Promise<VoterReport> {
     const rawAccount = xByDid.get(m.did) ?? m.x;
     if (!rawAccount || flaggedDids.has(m.did)) continue;
     const handle = xHandle(rawAccount);
-    if (!handle || mentionMap.has(handle)) continue;
+    if (!handle || mentionMap.has(handle) || authorHandles.has(handle)) continue;
     mentionMap.set(handle, { handle, words: m.words });
   }
   const mentions = [...mentionMap.values()];
 
-  const team = overview?.teams.find((t) => t.entryId === entryId) ?? null;
   const report: VoterReport = {
     entryId,
     gameId: team?.gameId ?? null,
@@ -1341,6 +1364,7 @@ export async function entryVoterReport(entryId: string): Promise<VoterReport> {
     suspect,
     evidence,
     mentions,
+    authors,
     generatedAt: new Date().toISOString(),
   };
   voterReportCache.set(entryId, { at: Date.now(), report });
