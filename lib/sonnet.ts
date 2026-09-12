@@ -1301,8 +1301,18 @@ export async function entryVoterReport(entryId: string): Promise<VoterReport> {
   // The accounts to tag: writers of the top-ranked entries (votes, then
   // words), each entry's most productive members first. This picks the people
   // behind the submitted X posts, not random zero-word wallets. Flagged
-  // wallets and the reported entry's own team are never tagged.
+  // wallets and the reported entry's own team are never tagged. Handles come
+  // from the sonnet_writers DB index so a cold instance still tags correctly.
   const flaggedDids = new Set(voters.filter((v) => v.flags.length > 0).map((v) => v.did));
+  const writerRows = await safeQuery(
+    "SELECT did, x_account FROM sonnet_writers WHERE x_account IS NOT NULL AND x_account <> ''",
+  ).catch(() => null);
+  const xByDid = new Map<string, string>();
+  for (const row of writerRows ?? []) {
+    const did = String(row["did"] ?? "");
+    const account = String(row["x_account"] ?? "");
+    if (did && account) xByDid.set(did, account);
+  }
   const mentionMap = new Map<string, VoterReportMention>();
   const rankedTeams = (overview?.teams ?? [])
     .filter((t) => t.entryId && t.entryId !== entryId)
@@ -1311,8 +1321,9 @@ export async function entryVoterReport(entryId: string): Promise<VoterReport> {
     if (mentionMap.size >= 30) break;
     for (const m of t.members.slice().sort((a, b) => b.words - a.words)) {
       if (mentionMap.size >= 30) break;
-      if (!m.x || m.words <= 0 || flaggedDids.has(m.did)) continue;
-      const handle = xHandle(m.x);
+      const rawAccount = xByDid.get(m.did) ?? m.x;
+      if (!rawAccount || m.words <= 0 || flaggedDids.has(m.did)) continue;
+      const handle = xHandle(rawAccount);
       if (!handle || mentionMap.has(handle)) continue;
       mentionMap.set(handle, { handle, words: m.words });
     }
