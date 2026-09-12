@@ -175,6 +175,19 @@ export async function ensureSchema(): Promise<void> {
       )
     `);
     await p.query(`CREATE INDEX IF NOT EXISTS idx_sonnet_reg_did ON sonnet_registrations (did)`);
+    // Raw sonnet board messages (votes, submissions, discovery), so reports and
+    // the overview never re-fetch the multi-MB room exports.
+    await p.query(`
+      CREATE TABLE IF NOT EXISTS sonnet_messages (
+        room TEXT NOT NULL,
+        seq BIGINT NOT NULL,
+        ts TEXT,
+        did TEXT NOT NULL,
+        text TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (room, seq)
+      )
+    `);
     // Sonnet-2 aggregate snapshot: pages load instantly from here while a
     // stale snapshot rebuilds in the background.
     await p.query(`

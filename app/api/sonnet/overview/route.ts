@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { loadSonnetOverview, refreshWriters, sonnetOverviewCached } from "@/lib/sonnet";
+import { ingestBoards, loadSonnetOverview, refreshWriters, sonnetOverviewCached } from "@/lib/sonnet";
 
 /**
  * GET /api/sonnet/overview — the whole sonnet-2 board (teams, poems, votes).
@@ -14,9 +14,13 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   // ?writers=1 also awaits the registration index (declared X accounts) —
   // called once in the background by the vote page when handles are missing.
   const withWriters = req.nextUrl.searchParams.get("writers") === "1";
+  const withBoards = req.nextUrl.searchParams.get("boards") === "1";
   try {
     if (withWriters) await refreshWriters();
-    const data = await loadSonnetOverview({ fresh: fresh || withWriters });
+    // ?boards=1 persists the votes/submissions/discovery rooms (heavy, run
+    // once in the background on demand); after that every read is instant.
+    if (withBoards) await ingestBoards({ fresh: true });
+    const data = await loadSonnetOverview({ fresh: fresh || withWriters || withBoards });
     return NextResponse.json({ ok: true, ...data });
   } catch (e) {
     const cached = sonnetOverviewCached();

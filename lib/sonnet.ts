@@ -319,6 +319,84 @@ async function writersFromDb(): Promise<Map<string, WriterRow>> {
   return map;
 }
 
+/* ---- persisted board messages (votes/submissions/discovery) ---- */
+
+const BOARD_ROOMS = [SONNET.rooms.votes, SONNET.rooms.submissions, SONNET.rooms.discovery];
+
+export async function readSonnetMessagesDb(room: string): Promise<SonnetMessage[]> {
+  const rows =
+    (await safeQuery(
+      `SELECT room, seq, ts, did, text FROM sonnet_messages WHERE room = $1 ORDER BY seq ASC`,
+      [room],
+    )) ?? [];
+  return rows
+    .map((r) => ({
+      room: String(r["room"] ?? room),
+      seq: Number(r["seq"] ?? 0),
+      from: String(r["did"] ?? ""),
+      text: String(r["text"] ?? ""),
+      ts: String(r["ts"] ?? ""),
+    }))
+    .filter((m) => m.from !== "" && m.text !== "");
+}
+
+async function persistSonnetMessages(room: string, messages: SonnetMessage[]): Promise<void> {
+  for (let i = 0; i < messages.length; i += 150) {
+    const chunk = messages.slice(i, i + 150);
+    const values: unknown[] = [];
+    const placeholders = chunk.map((m, j) => {
+      values.push(m.room, m.seq, m.ts, m.from, m.text);
+      const b = j * 5;
+      return `($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5})`;
+    });
+    await safeExec(
+      `INSERT INTO sonnet_messages (room, seq, ts, did, text)
+       VALUES ${placeholders.join(",")}
+       ON CONFLICT (room, seq) DO NOTHING`,
+      values,
+    );
+  }
+}
+
+let boardIngest: Promise<void> | null = null;
+
+/** Read the board rooms once and persist them (background, bounded). */
+export async function ingestBoards(opts: { fresh?: boolean } = {}): Promise<void> {
+  if (boardIngest) return boardIngest;
+  boardIngest = (async () => {
+    await Promise.all(
+      BOARD_ROOMS.map(async (room) => {
+        try {
+          const messages = await readSonnetRoom(room, { fresh: opts.fresh });
+          await persistSonnetMessages(room, messages);
+        } catch {
+          /* keep what the DB has */
+        }
+      }),
+    );
+  })().finally(() => {
+    boardIngest = null;
+  });
+  return boardIngest;
+}
+
+async function boardsStale(): Promise<boolean> {
+  const rows =
+    (await safeQuery(
+      `SELECT MAX(created_at) AS at FROM sonnet_messages WHERE room = $1`,
+      [SONNET.rooms.votes],
+    )) ?? [];
+  const at = rows[0]?.["at"] ? Date.parse(String(rows[0]?.["at"])) : 0;
+  return !at || Date.now() - at > 15 * 60_000;
+}
+
+/** Board messages from the DB when available, live as a cold fallback. */
+async function boardMessages(room: string): Promise<SonnetMessage[]> {
+  const stored = await readSonnetMessagesDb(room).catch(() => [] as SonnetMessage[]);
+  if (stored.length > 0) return stored;
+  return readSonnetRoom(room).catch(() => [] as SonnetMessage[]);
+}
+
 export interface StoredRegistration {
   seq: number;
   ts: string;
@@ -532,7 +610,7 @@ export async function mySonnetStatus(did: string): Promise<MySonnetStatus> {
   const [regRows, storedRegs, voteMessages, overview] = await Promise.all([
     safeQuery("SELECT role, x_account FROM sonnet_writers WHERE did = $1", [did]).catch(() => null),
     registrationsForDids([did]).catch(() => new Map<string, StoredRegistration[]>()),
-    readSonnetRoom(SONNET.rooms.votes).catch(() => [] as SonnetMessage[]),
+    boardMessages(SONNET.rooms.votes),
     loadSonnetOverview().catch(() => null),
   ]);
 
@@ -711,7 +789,7 @@ export async function entryVoterReport(entryId: string): Promise<VoterReport> {
   if (hit && Date.now() - hit.at < VOTER_REPORT_TTL_MS) return hit.report;
 
   const [voteMessages, overview] = await Promise.all([
-    readSonnetRoom(SONNET.rooms.votes).catch(() => [] as SonnetMessage[]),
+    boardMessages(SONNET.rooms.votes),
     loadSonnetOverview().catch(() => null),
   ]);
 
@@ -1046,12 +1124,19 @@ async function buildOverview(): Promise<SonnetOverview> {
   return (async () => {
     const [rules, discovery, votes, submissions, writers, roleRows] = await Promise.all([
       readSonnetRoom(SONNET.rooms.rules).catch(() => [] as SonnetMessage[]),
-      readSonnetRoom(SONNET.rooms.discovery).catch(() => [] as SonnetMessage[]),
-      readSonnetRoom(SONNET.rooms.votes).catch(() => [] as SonnetMessage[]),
-      readSonnetRoom(SONNET.rooms.submissions).catch(() => [] as SonnetMessage[]),
+      boardMessages(SONNET.rooms.discovery),
+      boardMessages(SONNET.rooms.votes),
+      boardMessages(SONNET.rooms.submissions),
       writersFromDb().catch(() => new Map<string, WriterRow>()),
       safeQuery("SELECT role, COUNT(*) AS n FROM sonnet_writers GROUP BY role").catch(() => null),
     ]);
+
+    // Keep the persisted board fresh in the background (never blocks).
+    void boardsStale()
+      .then((stale) => {
+        if (stale) void ingestBoards();
+      })
+      .catch(() => {});
     const participants = { writers: 0, voters: 0, organizers: 0 };
     for (const r of roleRows ?? []) {
       const role = String(r["role"] ?? "");
