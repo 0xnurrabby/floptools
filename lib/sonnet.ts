@@ -394,6 +394,8 @@ async function boardsStale(): Promise<boolean> {
 async function boardMessages(room: string): Promise<SonnetMessage[]> {
   const stored = await readSonnetMessagesDb(room).catch(() => [] as SonnetMessage[]);
   if (stored.length > 0) return stored;
+  // Cold index: heal in the background and answer from the live room once.
+  void ingestBoards().catch(() => {});
   return readSonnetRoom(room).catch(() => [] as SonnetMessage[]);
 }
 

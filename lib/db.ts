@@ -56,7 +56,17 @@ export async function ensureSchema(): Promise<void> {
   if (schemaReady) return;
   schemaPending ??= (async () => {
     const p = getPool();
-    await p.query(`
+    // Each statement is independent: a concurrent CREATE (IF NOT EXISTS is not
+    // race-proof in Postgres) or a DDL hiccup must not leave the whole schema
+    // half-applied and every later query failing.
+    const run = async (sql: string) => {
+      try {
+        await p.query(sql);
+      } catch {
+        /* race or hiccup — other statements still apply */
+      }
+    };
+    await run(`
       CREATE TABLE IF NOT EXISTS pageviews (
         id BIGSERIAL PRIMARY KEY,
         ip TEXT NOT NULL,
@@ -64,14 +74,14 @@ export async function ensureSchema(): Promise<void> {
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `);
-    await p.query(`
+    await run(`
       CREATE TABLE IF NOT EXISTS dids (
         did TEXT PRIMARY KEY,
         ip TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `);
-    await p.query(`
+    await run(`
       CREATE TABLE IF NOT EXISTS ai_generations (
         id BIGSERIAL PRIMARY KEY,
         ip TEXT,
@@ -82,8 +92,8 @@ export async function ensureSchema(): Promise<void> {
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `);
-    await p.query(`ALTER TABLE ai_generations ADD COLUMN IF NOT EXISTS did TEXT`);
-    await p.query(`
+    await run(`ALTER TABLE ai_generations ADD COLUMN IF NOT EXISTS did TEXT`);
+    await run(`
       CREATE TABLE IF NOT EXISTS task_events (
         id BIGSERIAL PRIMARY KEY,
         did TEXT NOT NULL,
@@ -91,7 +101,7 @@ export async function ensureSchema(): Promise<void> {
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `);
-    await p.query(`
+    await run(`
       CREATE TABLE IF NOT EXISTS trustcore_frames (
         hash TEXT PRIMARY KEY,
         room TEXT NOT NULL,
@@ -113,23 +123,23 @@ export async function ensureSchema(): Promise<void> {
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `);
-    await p.query(`CREATE INDEX IF NOT EXISTS idx_tc_frames_did ON trustcore_frames (did)`);
-    await p.query(`CREATE INDEX IF NOT EXISTS idx_tc_frames_contract ON trustcore_frames (contract_id)`);
-    await p.query(`CREATE INDEX IF NOT EXISTS idx_tc_frames_created ON trustcore_frames (created_at)`);
+    await run(`CREATE INDEX IF NOT EXISTS idx_tc_frames_did ON trustcore_frames (did)`);
+    await run(`CREATE INDEX IF NOT EXISTS idx_tc_frames_contract ON trustcore_frames (contract_id)`);
+    await run(`CREATE INDEX IF NOT EXISTS idx_tc_frames_created ON trustcore_frames (created_at)`);
     // Reveal preimages must survive the DB round-trip: buildDealStates only
     // marks a deal "claimed" when it can see the reveal secret.
-    await p.query(`ALTER TABLE trustcore_frames ADD COLUMN IF NOT EXISTS secret TEXT`);
+    await run(`ALTER TABLE trustcore_frames ADD COLUMN IF NOT EXISTS secret TEXT`);
     // Deal rooms the app has seen — Trustcore scans these so a deal's
     // lock/reveal/receipt frames are picked up even after the offer+accept
     // scrolls out of the tclk-offers tail.
-    await p.query(`
+    await run(`
       CREATE TABLE IF NOT EXISTS trustcore_rooms (
         room TEXT PRIMARY KEY,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `);
     // Small key/value store for ingest bookkeeping (last successful scan time).
-    await p.query(`
+    await run(`
       CREATE TABLE IF NOT EXISTS trustcore_meta (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,
@@ -138,7 +148,7 @@ export async function ensureSchema(): Promise<void> {
     `);
     // Pro-panel telemetry, kept apart from the app-wide stats so /proadmin
     // and /admin never mix data.
-    await p.query(`
+    await run(`
       CREATE TABLE IF NOT EXISTS pro_events (
         id BIGSERIAL PRIMARY KEY,
         ip TEXT NOT NULL,
@@ -147,11 +157,11 @@ export async function ensureSchema(): Promise<void> {
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `);
-    await p.query(`CREATE INDEX IF NOT EXISTS idx_pro_events_created ON pro_events (created_at)`);
-    await p.query(`CREATE INDEX IF NOT EXISTS idx_pro_events_ip ON pro_events (ip)`);
+    await run(`CREATE INDEX IF NOT EXISTS idx_pro_events_created ON pro_events (created_at)`);
+    await run(`CREATE INDEX IF NOT EXISTS idx_pro_events_ip ON pro_events (ip)`);
     // Sonnet-2 writer registrations (public data) so pages can show each
     // writer's declared X account without rescanning the huge room each time.
-    await p.query(`
+    await run(`
       CREATE TABLE IF NOT EXISTS sonnet_writers (
         did TEXT PRIMARY KEY,
         role TEXT,
@@ -161,7 +171,7 @@ export async function ensureSchema(): Promise<void> {
     `);
     // Every registration message (public), so reports never re-scan the huge
     // registration room — the ingest keeps this table up to date instead.
-    await p.query(`
+    await run(`
       CREATE TABLE IF NOT EXISTS sonnet_registrations (
         did TEXT NOT NULL,
         seq BIGINT NOT NULL,
@@ -174,10 +184,10 @@ export async function ensureSchema(): Promise<void> {
         PRIMARY KEY (did, seq)
       )
     `);
-    await p.query(`CREATE INDEX IF NOT EXISTS idx_sonnet_reg_did ON sonnet_registrations (did)`);
+    await run(`CREATE INDEX IF NOT EXISTS idx_sonnet_reg_did ON sonnet_registrations (did)`);
     // Raw sonnet board messages (votes, submissions, discovery), so reports and
     // the overview never re-fetch the multi-MB room exports.
-    await p.query(`
+    await run(`
       CREATE TABLE IF NOT EXISTS sonnet_messages (
         room TEXT NOT NULL,
         seq BIGINT NOT NULL,
@@ -190,14 +200,14 @@ export async function ensureSchema(): Promise<void> {
     `);
     // Sonnet-2 aggregate snapshot: pages load instantly from here while a
     // stale snapshot rebuilds in the background.
-    await p.query(`
+    await run(`
       CREATE TABLE IF NOT EXISTS sonnet_cache (
         key TEXT PRIMARY KEY,
         data JSONB NOT NULL,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `);
-    await p.query(`
+    await run(`
       CREATE TABLE IF NOT EXISTS ip_geo (
         ip TEXT PRIMARY KEY,
         country TEXT,
