@@ -59,6 +59,7 @@ interface Team {
 interface Overview {
   ok: boolean;
   stale?: boolean;
+  building?: boolean;
   updatedAt: string;
   cachedAt?: string;
   contest: { deadline: number; referee: string };
@@ -156,13 +157,15 @@ export default function SonnetVotePage() {
    * re-requests data younger than a minute, and never polls hidden tabs.
    */
   useEffect(() => {
+    const interval = data?.building ? 20_000 : 90_000;
+    const minAge = data?.building ? 8_000 : 60_000;
     const check = () => {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
-      if (Date.now() - lastLoadRef.current < 60_000) return;
+      if (Date.now() - lastLoadRef.current < minAge) return;
       void load();
       void loadMe();
     };
-    const id = setInterval(check, 90_000);
+    const id = setInterval(check, interval);
     const onWake = () => check();
     document.addEventListener("visibilitychange", onWake);
     window.addEventListener("focus", onWake);
@@ -171,7 +174,7 @@ export default function SonnetVotePage() {
       document.removeEventListener("visibilitychange", onWake);
       window.removeEventListener("focus", onWake);
     };
-  }, [load, loadMe]);
+  }, [load, loadMe, data?.building]);
 
   const registerAsVoter = async () => {
     if (!did || regBusy) return;
@@ -402,6 +405,7 @@ export default function SonnetVotePage() {
           <StatusChip tone="empty">
             {busy ? "updating…" : <>updated <Ago value={data.cachedAt ?? data.updatedAt} /></>}
           </StatusChip>
+          {data.building ? <StatusChip tone="warn">refreshing…</StatusChip> : null}
         </div>
       ) : null}
 

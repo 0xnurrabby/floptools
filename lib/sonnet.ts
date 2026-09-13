@@ -1406,14 +1406,19 @@ function rebuildSnapshot(): Promise<SonnetOverview> {
   overviewInflight = (async () => {
     const previous = overviewCache?.data ?? (await readDbSnapshot().catch(() => null))?.data ?? null;
     const data = await buildOverview();
-    // A room read can fail transiently; never let a reduced snapshot replace a
-    // more complete one (the next cycle retries).
+    // A room read or tally query can fail transiently; never let a reduced
+    // snapshot replace a more complete one (the next cycle retries).
     const degraded =
       previous !== null &&
       (data.teams.length === 0 ||
         (data.totals.entries === 0 && previous.totals.entries > 0) ||
         data.totals.entries < Math.floor(previous.totals.entries / 2) ||
-        data.teams.length < Math.floor(previous.teams.length / 2));
+        data.teams.length < Math.floor(previous.teams.length / 2) ||
+        (data.totals.countedBallots === 0 && previous.totals.countedBallots > 0) ||
+        data.totals.countedBallots < Math.floor(previous.totals.countedBallots / 2) ||
+        (data.totals.voters === 0 && previous.totals.voters > 0) ||
+        (data.participants.writers === 0 && previous.participants.writers > 0) ||
+        (data.participants.voters === 0 && previous.participants.voters > 0));
     if (degraded && previous) {
       overviewCache = { at: Date.now(), data: previous };
       return previous;
@@ -1450,6 +1455,52 @@ export async function loadSonnetOverview(opts: { fresh?: boolean } = {}): Promis
   return rebuildSnapshot();
 }
 
+/**
+ * Never-awaits-a-rebuild overview for pages: a warm or DB snapshot is served
+ * immediately (even when stale), a rebuild is kicked off in the background,
+ * and `building: true` tells the UI data may be a moment behind. Only when
+ * nothing is cached at all does `data` come back null.
+ */
+export async function sonnetOverviewFast(): Promise<{ data: SonnetOverview | null; building: boolean }> {
+  const now = Date.now();
+  if (overviewCache && now - overviewCache.at < OVERVIEW_TTL_MS) {
+    return { data: overviewCache.data, building: false };
+  }
+  const dbCached = await readDbSnapshot().catch(() => null);
+  if (dbCached) {
+    overviewCache = { at: dbCached.at, data: dbCached.data };
+    const stale = now - dbCached.at >= OVERVIEW_TTL_MS || (await snapshotDegenerate(dbCached.data));
+    if (stale) void rebuildSnapshot().catch(() => {});
+    return { data: dbCached.data, building: stale };
+  }
+  void rebuildSnapshot().catch(() => {});
+  return { data: overviewCache?.data ?? null, building: true };
+}
+
+/** True when a snapshot's totals contradict the ballot table (bad build). */
+async function snapshotDegenerate(data: SonnetOverview): Promise<boolean> {
+  if (data.teams.length === 0) return true;
+  if (data.totals.countedBallots > 0) return false;
+  try {
+    const rows = await safeQuery("SELECT COUNT(*) AS n FROM sonnet_ballots");
+    return Number(rows?.[0]?.["n"] ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
+/** A minimal overview for the first paint before any snapshot exists. */
+export function sonnetOverviewShell(): SonnetOverview {
+  return {
+    updatedAt: new Date().toISOString(),
+    contest: { opening: SONNET.openMs, deadline: SONNET.closeMs, referee: SONNET.referee, status: null },
+    teams: [],
+    totals: { teams: 0, entries: 0, ballots: 0, countedBallots: 0, voters: 0 },
+    participants: { writers: 0, voters: 0, organizers: 0 },
+    writersIndexed: 0,
+  };
+}
+
 async function buildOverview(): Promise<SonnetOverview> {
   return (async () => {
     const [rules, discovery, submissions, writers, roleRows, ballotTally] = await Promise.all([
@@ -1458,8 +1509,11 @@ async function buildOverview(): Promise<SonnetOverview> {
       boardMessages(SONNET.rooms.submissions),
       writersFromDb().catch(() => new Map<string, WriterRow>()),
       safeQuery("SELECT role, COUNT(*) AS n FROM sonnet_writers GROUP BY role").catch(() => null),
-      acceptedBallotsByVoter().catch(() => ({ proposals: 0, last: new Map<string, AcceptedBallot>() })),
+      acceptedBallotsByVoter().catch(() => null),
     ]);
+    // A failed tally must never be persisted as "0 ballots": treat it as a
+    // failed build and keep serving the previous snapshot.
+    if (!ballotTally) throw new Error("ballot tally unavailable");
 
     // Keep the persisted board fresh in the background (never blocks).
     void boardsStale()
@@ -1726,4 +1780,100 @@ export async function liveRooms(): Promise<string[]> {
   } catch {
     return shared;
   }
+}
+
+/* ---------------- top exploiters (from the voters & rug reports) ---------- */
+
+export interface ExploiterRow {
+  entryId: string;
+  gameId: string;
+  votes: number;
+  score: number;
+  level: "low" | "notable" | "high";
+  suspect: VoterReportSuspect | null;
+  evidence: VoterReportEvidence;
+}
+
+const EXPLOITERS_KEY = "exploiters";
+const EXPLOITERS_TTL_MS = 10 * 60_000;
+let exploitersCache: { at: number; rows: ExploiterRow[] } | null = null;
+let exploitersInflight: Promise<ExploiterRow[]> | null = null;
+
+async function readExploitersDb(): Promise<{ at: number; rows: ExploiterRow[] } | null> {
+  const rows =
+    (await safeQuery("SELECT data, updated_at FROM sonnet_cache WHERE key = $1", [EXPLOITERS_KEY])) ?? [];
+  const r = rows[0];
+  if (!r || !r["data"]) return null;
+  const at = r["updated_at"] ? Date.parse(String(r["updated_at"])) : 0;
+  const data = r["data"];
+  if (!Array.isArray(data)) return null;
+  return { at: Number.isFinite(at) ? at : 0, rows: data as ExploiterRow[] };
+}
+
+async function writeExploitersDb(rows: ExploiterRow[]): Promise<void> {
+  await safeExec(
+    `INSERT INTO sonnet_cache (key, data, updated_at) VALUES ($1, $2::jsonb, now())
+     ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
+    [EXPLOITERS_KEY, JSON.stringify(rows)],
+  );
+}
+
+/** Score every entry with ballots using the public rug-report analysis. */
+function buildExploiters(): Promise<ExploiterRow[]> {
+  if (exploitersInflight) return exploitersInflight;
+  exploitersInflight = (async () => {
+    const overview = await loadSonnetOverview();
+    const entries = overview.teams.filter((t) => t.entryId).slice(0, 60);
+    const rows: ExploiterRow[] = [];
+    for (const t of entries) {
+      if (!t.entryId) continue;
+      try {
+        const report = await entryVoterReport(t.entryId);
+        rows.push({
+          entryId: t.entryId,
+          gameId: t.gameId,
+          votes: report.votes,
+          score: report.risk.score,
+          level: report.risk.level,
+          suspect: report.suspect,
+          evidence: report.evidence,
+        });
+      } catch {
+        /* one bad entry never blocks the board */
+      }
+    }
+    rows.sort((a, b) => b.score - a.score || b.votes - a.votes);
+    if (rows.length > 0) await writeExploitersDb(rows).catch(() => {});
+    exploitersCache = { at: Date.now(), rows };
+    return rows;
+  })().finally(() => {
+    exploitersInflight = null;
+  });
+  return exploitersInflight;
+}
+
+/**
+ * Exploit board, served instantly: memory, then the persisted snapshot, and a
+ * background scan when stale. `building: true` means the numbers refresh soon.
+ */
+export async function topExploiters(): Promise<{
+  rows: ExploiterRow[];
+  building: boolean;
+  at: string | null;
+}> {
+  const now = Date.now();
+  if (exploitersCache && now - exploitersCache.at < EXPLOITERS_TTL_MS) {
+    return { rows: exploitersCache.rows, building: false, at: new Date(exploitersCache.at).toISOString() };
+  }
+  const db = await readExploitersDb().catch(() => null);
+  if (db && now - db.at < EXPLOITERS_TTL_MS) {
+    exploitersCache = { at: db.at, rows: db.rows };
+    return { rows: db.rows, building: false, at: new Date(db.at).toISOString() };
+  }
+  void buildExploiters().catch(() => {});
+  if (db) {
+    exploitersCache = { at: db.at, rows: db.rows };
+    return { rows: db.rows, building: true, at: new Date(db.at).toISOString() };
+  }
+  return { rows: [], building: true, at: null };
 }

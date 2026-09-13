@@ -7,6 +7,7 @@ import { LocalTime } from "@/components/local-time";
 
 interface Overview {
   ok: boolean;
+  building?: boolean;
   updatedAt: string;
   cachedAt?: string;
   contest: {
@@ -44,6 +45,11 @@ const CARDS = [
     body: "Every team and entry in detail: members, X accounts, the poem, publication links — then cast your ballot.",
   },
   {
+    href: "/sonnet/top-exploiters",
+    title: "Top Exploiters",
+    body: "Every entry scored by the voters & rug report: coordination risk, the wallet flagged hardest, and the raw ledger numbers.",
+  },
+  {
     href: "/sonnet/yourvote",
     title: "Your vote",
     body: "If you have voted: your ballot, the referee receipt for it, and the full standing of the entry you backed.",
@@ -69,14 +75,17 @@ export default function SonnetPage() {
     void load();
   }, [load]);
 
-  // Smart auto-refresh: re-ask on tab focus and every 90s while visible.
+  // Smart auto-refresh: re-ask on tab focus and on a steady interval, faster
+  // while the first snapshot is still building.
   useEffect(() => {
+    const interval = data?.building ? 20_000 : 90_000;
+    const minAge = data?.building ? 8_000 : 60_000;
     const check = () => {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
-      if (Date.now() - lastLoadRef.current < 60_000) return;
+      if (Date.now() - lastLoadRef.current < minAge) return;
       void load();
     };
-    const id = setInterval(check, 90_000);
+    const id = setInterval(check, interval);
     const onWake = () => check();
     document.addEventListener("visibilitychange", onWake);
     window.addEventListener("focus", onWake);
@@ -85,7 +94,7 @@ export default function SonnetPage() {
       document.removeEventListener("visibilitychange", onWake);
       window.removeEventListener("focus", onWake);
     };
-  }, [load]);
+  }, [load, data?.building]);
 
   const status = data?.contest.status ?? null;
 
@@ -110,6 +119,7 @@ export default function SonnetPage() {
           </StatusChip>
           <StatusChip tone="ok">{status?.voters || data.participants?.voters || 0} voters</StatusChip>
           <StatusChip tone="empty">{data.totals.countedBallots} counted ballots</StatusChip>
+          {data.building ? <StatusChip tone="warn">refreshing…</StatusChip> : null}
           <span className="caption-sm text-mute">
             updated <LocalTime value={data.cachedAt ?? data.updatedAt} timeStyle="medium" />
           </span>

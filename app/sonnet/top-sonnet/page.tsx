@@ -28,6 +28,7 @@ interface Team {
 interface Overview {
   ok: boolean;
   stale?: boolean;
+  building?: boolean;
   updatedAt: string;
   cachedAt?: string;
   teams: Team[];
@@ -82,12 +83,14 @@ export default function TopSonnetPage() {
   // Smart auto-refresh: re-ask on tab focus and every 90s while visible; the
   // API rebuilds its snapshot in the background when it goes stale.
   useEffect(() => {
+    const interval = data?.building ? 20_000 : 90_000;
+    const minAge = data?.building ? 8_000 : 60_000;
     const check = () => {
       if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
-      if (Date.now() - lastLoadRef.current < 60_000) return;
+      if (Date.now() - lastLoadRef.current < minAge) return;
       void load();
     };
-    const id = setInterval(check, 90_000);
+    const id = setInterval(check, interval);
     const onWake = () => check();
     document.addEventListener("visibilitychange", onWake);
     window.addEventListener("focus", onWake);
@@ -96,7 +99,7 @@ export default function TopSonnetPage() {
       document.removeEventListener("visibilitychange", onWake);
       window.removeEventListener("focus", onWake);
     };
-  }, [load]);
+  }, [load, data?.building]);
 
   const entries = (data?.teams ?? []).filter((t) => t.entryId);
   const writing = (data?.teams ?? []).filter((t) => !t.entryId);
@@ -135,6 +138,7 @@ export default function TopSonnetPage() {
           <StatusChip tone="empty">
             {busy ? "updating…" : <>updated <Ago value={data.cachedAt ?? data.updatedAt} /></>}
           </StatusChip>
+          {data.building ? <StatusChip tone="warn">refreshing…</StatusChip> : null}
         </div>
       ) : null}
 
