@@ -44,6 +44,7 @@ interface Team {
   gameId: string;
   poemRoom: string;
   members: Member[];
+  words: { word: string; by: string; version: number; ts?: string }[];
   lines: string[];
   complete: boolean;
   wordCount: number;
@@ -191,25 +192,33 @@ export default function SonnetVotePage() {
   }, [data]);
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    const list = (data?.teams ?? []).filter((t) => {
-      if (!q) return true;
-      if (t.gameId.toLowerCase().includes(q)) return true;
-      if (t.entryId && t.entryId.toLowerCase().includes(q)) return true;
-      return t.members.some(
-        (m) => m.did.slice(-6).toLowerCase().includes(q) || (m.x ?? "").toLowerCase().includes(q),
-      );
+    const tokens = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    // Search every field a visitor could know: name, entry id, member DIDs
+    // and handles, and the poem itself. All tokens must match, so results
+    // stay exact instead of fuzzy noise.
+    const teams = (data?.teams ?? []).filter((t) => {
+      if (tokens.length === 0) return true;
+      const hay = [
+        t.gameId,
+        t.entryId ?? "",
+        ...t.members.flatMap((m) => [m.did, m.did.slice(-4), m.did.slice(-6), m.x ?? ""]),
+        ...t.words.map((w) => w.word),
+        ...t.lines,
+      ]
+        .join(" ")
+        .toLowerCase();
+      return tokens.every((tok) => hay.includes(tok));
     });
-    if (sort === "votes") return list.filter((t) => t.entryId).sort((a, b) => b.votes - a.votes || b.wordCount - a.wordCount);
-    if (sort === "recent") return list.slice().sort((a, b) => (a.lastAt < b.lastAt ? 1 : -1));
-    return list.slice().sort((a, b) => a.gameId.localeCompare(b.gameId));
+    if (sort === "votes") {
+      return teams
+        .slice()
+        .sort((a, b) => b.votes - a.votes || b.wordCount - a.wordCount || a.gameId.localeCompare(b.gameId));
+    }
+    if (sort === "recent") return teams.slice().sort((a, b) => (a.lastAt < b.lastAt ? 1 : -1));
+    return teams.slice().sort((a, b) => a.gameId.localeCompare(b.gameId));
   }, [data, query, sort]);
 
   const entries = (data?.teams ?? []).filter((t) => t.entryId);
-  // votes mode: entries in the main list, writing teams in their own section.
-  // other sorts: everything inline (no duplicates anywhere).
-  const explicit = sort === "votes" ? filtered.filter((t) => t.entryId) : filtered;
-  const writing = sort === "votes" ? filtered.filter((t) => !t.entryId) : [];
 
   return (
     <div className="mx-auto max-w-4xl px-4 pb-10 pt-12">
@@ -319,7 +328,7 @@ export default function SonnetVotePage() {
         <TextInput
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search game, entry, DID suffix or X handle"
+          placeholder="Search entry, DID suffix, X handle or poem line"
           className="sm:w-80"
         />
         <div className="flex gap-2">
@@ -353,18 +362,21 @@ export default function SonnetVotePage() {
         <div className="mt-8">
           <Spinner label="Reading every team and entry…" />
         </div>
-      ) : explicit.length === 0 && writing.length === 0 ? (
+      ) : filtered.length === 0 ? (
         <div className="mt-8">
-          <Note tone="info">Nothing matches this search.</Note>
+          <Note tone="info">
+            Nothing matches this search. Try a single word from the entry name, a member DID suffix,
+            an X handle, or a line from the poem.
+          </Note>
         </div>
       ) : (
         <div className="mt-6 space-y-4">
-          {explicit.map((t, i) => (
+          {filtered.map((t, i) => (
             <Card key={t.gameId}>
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="body-sm-strong text-ink">
-                    {sort === "votes" && t.entryId ? (
+                    {sort === "votes" ? (
                       <span className="mr-2 inline-flex h-6 w-6 items-center justify-center rounded-full bg-tint-brand font-mono text-[12px] font-semibold text-brand-600">
                         {i + 1}
                       </span>
@@ -474,22 +486,6 @@ export default function SonnetVotePage() {
             </Card>
           ))}
 
-          {writing.length > 0 ? (
-            <section className="pt-4">
-              <h2 className="heading-lg">Still writing</h2>
-              <p className="caption-sm mt-1 text-body">
-                These teams have not submitted an entry yet — no ballot can count for them.
-              </p>
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                {writing.map((t) => (
-                  <div key={t.gameId} className="flex items-center justify-between gap-2 rounded-[12px] border border-hairline bg-surface-card px-4 py-2.5">
-                    <code className="font-mono text-[13px] text-ink">{t.gameId}</code>
-                    <span className="caption-sm text-body">{t.wordCount} words · {t.members.length} writers</span>
-                  </div>
-                ))}
-              </div>
-            </section>
-          ) : null}
         </div>
       )}
 

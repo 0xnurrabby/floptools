@@ -57,6 +57,43 @@ interface Stats {
     geo?: IpGeo | null;
   }[];
   recent: { ip: string; path: string; createdAt: string }[];
+  sonnet: {
+    registrations: number;
+    voterDids: number;
+    ballots: number;
+    accepted: number;
+    rejected: number;
+  };
+  sonnetRegs: {
+    did: string;
+    seq: number;
+    ts: string;
+    role: string;
+    receipt: string;
+    reason: string;
+    receiptAt: string;
+    ip: string;
+    geo?: IpGeo | null;
+  }[];
+  sonnetBallots: {
+    did: string;
+    seq: number;
+    ts: string;
+    entryId: string;
+    requestId: string;
+    reason: string | null;
+    hasReceipt: boolean;
+    ip: string;
+    geo?: IpGeo | null;
+  }[];
+  recentGens: {
+    did: string;
+    ip: string;
+    geo?: IpGeo | null;
+    model: string;
+    tokens: number;
+    createdAt: string;
+  }[];
 }
 
 type Phase = "loading" | "ready" | "error" | "unauthorized";
@@ -179,6 +216,155 @@ export function AdminDashboard() {
         <Stat label="Generation calls" value={o.generationCalls} sub="logged in DB" />
       </div>
 
+      {/* Sonnet usage */}
+      <section className="mt-10">
+        <h2 className="heading-lg">Sonnet-2 activity</h2>
+        <p className="caption-sm mt-1 text-body">
+          Voter registrations and ballots recorded from the public ledger. When a DID also exists in
+          this site&apos;s records (created or used here), its IP and location are shown so you can
+          see who voted through floptools.
+        </p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <Stat label="Voter DIDs" value={stats.sonnet.voterDids} />
+          <Stat label="Registrations" value={stats.sonnet.registrations} />
+          <Stat label="Ballots" value={stats.sonnet.ballots} />
+          <Stat label="Accepted" value={stats.sonnet.accepted} />
+          <Stat label="Rejected" value={stats.sonnet.rejected} />
+        </div>
+
+        <h3 className="heading-md mt-7">Votes cast (latest 120)</h3>
+        <div className="mt-3 overflow-x-auto rounded-[12px] border border-hairline">
+          <table className="w-full min-w-[960px] text-left text-[13px]">
+            <thead>
+              <tr className="border-b border-hairline bg-surface-soft">
+                <th className="px-4 py-2.5 font-medium text-mute">Voter DID</th>
+                <th className="px-4 py-2.5 font-medium text-mute">Entry</th>
+                <th className="px-4 py-2.5 font-medium text-mute">Outcome</th>
+                <th className="px-4 py-2.5 font-medium text-mute">Cast</th>
+                <th className="px-4 py-2.5 font-medium text-mute">From (site)</th>
+                <th className="px-4 py-2.5 font-medium text-mute">Request id</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stats.sonnetBallots.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-6 text-center text-mute">No ballots recorded yet.</td>
+                </tr>
+              ) : (
+                stats.sonnetBallots.map((b) => (
+                  <tr key={`${b.requestId}-${b.did}`} className="border-b border-hairline last:border-0">
+                    <td className="px-4 py-2.5 font-mono" title={b.did}>
+                      {b.did ? `…${b.did.slice(-8)}` : "—"}
+                    </td>
+                    <td className="px-4 py-2.5 font-mono">{b.entryId || "—"}</td>
+                    <td className="px-4 py-2.5">
+                      {b.hasReceipt ? (
+                        b.reason ? (
+                          <StatusChip tone="error">rejected</StatusChip>
+                        ) : (
+                          <StatusChip tone="ok">accepted</StatusChip>
+                        )
+                      ) : (
+                        <StatusChip tone="empty">pending</StatusChip>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-body">{fmtTime(b.ts)}</td>
+                    <td className="px-4 py-2.5">
+                      {b.ip ? <GeoText ip={b.ip} geo={b.geo} /> : <span className="text-mute">—</span>}
+                    </td>
+                    <td className="max-w-44 truncate px-4 py-2.5 font-mono text-[11px] text-mute" title={b.requestId}>
+                      {b.requestId || "—"}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <h3 className="heading-md mt-7">Voter registrations (latest 120)</h3>
+        <div className="mt-3 overflow-x-auto rounded-[12px] border border-hairline">
+          <table className="w-full min-w-[820px] text-left text-[13px]">
+            <thead>
+              <tr className="border-b border-hairline bg-surface-soft">
+                <th className="px-4 py-2.5 font-medium text-mute">DID</th>
+                <th className="px-4 py-2.5 font-medium text-mute">Role</th>
+                <th className="px-4 py-2.5 font-medium text-mute">Receipt</th>
+                <th className="px-4 py-2.5 font-medium text-mute">Reason</th>
+                <th className="px-4 py-2.5 font-medium text-mute">Registered</th>
+                <th className="px-4 py-2.5 font-medium text-mute">From (site)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stats.sonnetRegs.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-4 py-6 text-center text-mute">No registrations recorded yet.</td>
+                </tr>
+              ) : (
+                stats.sonnetRegs.map((r) => (
+                  <tr key={`${r.did}-${r.seq}`} className="border-b border-hairline last:border-0">
+                    <td className="px-4 py-2.5 font-mono" title={r.did}>
+                      {r.did ? `…${r.did.slice(-8)}` : "—"}
+                    </td>
+                    <td className="px-4 py-2.5 text-body">{r.role || "—"}</td>
+                    <td className="px-4 py-2.5">
+                      <StatusChip
+                        tone={r.receipt === "accepted" ? "ok" : r.receipt === "rejected" ? "error" : "empty"}
+                      >
+                        {r.receipt || "pending"}
+                      </StatusChip>
+                    </td>
+                    <td className="max-w-56 truncate px-4 py-2.5 text-body" title={r.reason}>
+                      {r.reason || "—"}
+                    </td>
+                    <td className="px-4 py-2.5 text-body">{fmtTime(r.ts)}</td>
+                    <td className="px-4 py-2.5">
+                      {r.ip ? <GeoText ip={r.ip} geo={r.geo} /> : <span className="text-mute">—</span>}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        <h3 className="heading-md mt-7">AI generations (latest 80)</h3>
+        <div className="mt-3 overflow-x-auto rounded-[12px] border border-hairline">
+          <table className="w-full min-w-[720px] text-left text-[13px]">
+            <thead>
+              <tr className="border-b border-hairline bg-surface-soft">
+                <th className="px-4 py-2.5 font-medium text-mute">DID</th>
+                <th className="px-4 py-2.5 font-medium text-mute">Model</th>
+                <th className="px-4 py-2.5 font-medium text-mute">Tokens</th>
+                <th className="px-4 py-2.5 font-medium text-mute">When</th>
+                <th className="px-4 py-2.5 font-medium text-mute">From (site)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stats.recentGens.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-4 py-6 text-center text-mute">No generations recorded yet.</td>
+                </tr>
+              ) : (
+                stats.recentGens.map((g, i) => (
+                  <tr key={`${g.did}-${i}`} className="border-b border-hairline last:border-0">
+                    <td className="px-4 py-2.5 font-mono" title={g.did}>
+                      {g.did ? `…${g.did.slice(-8)}` : "—"}
+                    </td>
+                    <td className="px-4 py-2.5 text-body">{g.model || "—"}</td>
+                    <td className="px-4 py-2.5 font-mono text-body">{g.tokens.toLocaleString()}</td>
+                    <td className="px-4 py-2.5 text-body">{fmtTime(g.createdAt)}</td>
+                    <td className="px-4 py-2.5">
+                      {g.ip ? <GeoText ip={g.ip} geo={g.geo} /> : <span className="text-mute">—</span>}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
       {/* DID states */}
       <section className="mt-10">
         <h2 className="heading-lg">DID states</h2>
@@ -300,8 +486,10 @@ export function AdminDashboard() {
       </section>
 
       <p className="caption-sm mt-10 text-body">
-        Anonymous aggregate stats only: no keys, no message content, no user data beyond IP for counting.
-        The admin session is a signed HttpOnly cookie; the password lives in server environment.
+        Anonymous aggregate stats plus public-ledger records: no keys and no message content. Ballot
+        and registration rows are public ledger data; IP and location appear only for DIDs that also
+        exist in this site&apos;s own records. The admin session is a signed HttpOnly cookie; the
+        password lives in server environment.
       </p>
     </div>
   );

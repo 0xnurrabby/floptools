@@ -62,7 +62,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     });
   }
 
-  const [usersAll, users24, pvAll, pv24, didsAll, dids24, genAll, gen24, tokAll, tok24, genAllRows, didRows, recent, ipRows] =
+  const [usersAll, users24, pvAll, pv24, didsAll, dids24, genAll, gen24, tokAll, tok24, genAllRows, didRows, recent, ipRows, sonnetCounts, sonnetRegs, sonnetBallots, recentGens] =
     await Promise.all([
       counts("SELECT COUNT(DISTINCT ip) AS n FROM pageviews"),
       counts("SELECT COUNT(DISTINCT ip) AS n FROM pageviews WHERE created_at > now() - interval '24 hours'"),
@@ -86,6 +86,34 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
                 (SELECT COUNT(*) FROM dids d WHERE d.ip = p.ip) AS dids,
                 (SELECT COUNT(*) FROM ai_generations a WHERE a.ip = p.ip) AS ai_gens
          FROM pageviews p GROUP BY p.ip ORDER BY last_active DESC LIMIT 60`,
+      ),
+      safeQuery(
+        `SELECT
+           (SELECT COUNT(*) FROM sonnet_registrations) AS regs,
+           (SELECT COUNT(DISTINCT did) FROM sonnet_registrations WHERE role = 'voter') AS voters,
+           (SELECT COUNT(*) FROM sonnet_ballots) AS ballots,
+           (SELECT COUNT(*) FROM sonnet_ballot_receipts WHERE COALESCE(reason, '') = '') AS accepted,
+           (SELECT COUNT(*) FROM sonnet_ballot_receipts WHERE COALESCE(reason, '') <> '') AS rejected`,
+      ),
+      safeQuery(
+        `SELECT r.did, r.seq, r.ts, r.role, r.receipt, r.reason, r.receipt_at, d.ip
+         FROM sonnet_registrations r
+         LEFT JOIN dids d ON d.did = r.did
+         ORDER BY r.ts DESC NULLS LAST, r.seq DESC
+         LIMIT 120`,
+      ),
+      safeQuery(
+        `SELECT b.did, b.seq, b.ts, b.entry_id, b.request_id, r.reason,
+                (r.request_id IS NOT NULL) AS has_receipt, d.ip
+         FROM sonnet_ballots b
+         LEFT JOIN sonnet_ballot_receipts r ON r.request_id = b.request_id AND r.sender_did = b.did
+         LEFT JOIN dids d ON d.did = b.did
+         ORDER BY b.ts DESC NULLS LAST, b.seq DESC
+         LIMIT 120`,
+      ),
+      safeQuery(
+        `SELECT did, ip, model, total_tokens, created_at
+         FROM ai_generations ORDER BY created_at DESC LIMIT 80`,
       ),
     ]);
 
@@ -132,7 +160,10 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const geoMap = await geoForMany(
     (ipRows ?? [])
       .map((r) => String(r["ip"] ?? ""))
-      .concat(checked.map((d) => String(d["ip"] ?? ""))),
+      .concat(checked.map((d) => String(d["ip"] ?? "")))
+      .concat((sonnetRegs ?? []).map((r) => String(r["ip"] ?? "")))
+      .concat((sonnetBallots ?? []).map((r) => String(r["ip"] ?? "")))
+      .concat((recentGens ?? []).map((r) => String(r["ip"] ?? ""))),
   );
   const geoFor = (ip: string) => {
     const g = geoMap.get(ip);
@@ -187,6 +218,43 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     recent: (recent ?? []).map((r) => ({
       ip: String(r["ip"] ?? "?"),
       path: String(r["path"] ?? "/"),
+      createdAt: String(r["created_at"] ?? ""),
+    })),
+    sonnet: {
+      registrations: Number((sonnetCounts ?? [])[0]?.["regs"] ?? 0),
+      voterDids: Number((sonnetCounts ?? [])[0]?.["voters"] ?? 0),
+      ballots: Number((sonnetCounts ?? [])[0]?.["ballots"] ?? 0),
+      accepted: Number((sonnetCounts ?? [])[0]?.["accepted"] ?? 0),
+      rejected: Number((sonnetCounts ?? [])[0]?.["rejected"] ?? 0),
+    },
+    sonnetRegs: (sonnetRegs ?? []).map((r) => ({
+      did: String(r["did"] ?? ""),
+      seq: Number(r["seq"] ?? 0),
+      ts: String(r["ts"] ?? ""),
+      role: String(r["role"] ?? ""),
+      receipt: String(r["receipt"] ?? "pending"),
+      reason: String(r["reason"] ?? ""),
+      receiptAt: String(r["receipt_at"] ?? ""),
+      ip: String(r["ip"] ?? ""),
+      geo: geoFor(String(r["ip"] ?? "")),
+    })),
+    sonnetBallots: (sonnetBallots ?? []).map((r) => ({
+      did: String(r["did"] ?? ""),
+      seq: Number(r["seq"] ?? 0),
+      ts: String(r["ts"] ?? ""),
+      entryId: String(r["entry_id"] ?? ""),
+      requestId: String(r["request_id"] ?? ""),
+      reason: r["reason"] === null || r["reason"] === undefined ? null : String(r["reason"]),
+      hasReceipt: r["has_receipt"] === true || r["has_receipt"] === "t",
+      ip: String(r["ip"] ?? ""),
+      geo: geoFor(String(r["ip"] ?? "")),
+    })),
+    recentGens: (recentGens ?? []).map((r) => ({
+      did: String(r["did"] ?? ""),
+      ip: String(r["ip"] ?? ""),
+      geo: geoFor(String(r["ip"] ?? "")),
+      model: String(r["model"] ?? ""),
+      tokens: Number(r["total_tokens"] ?? 0),
       createdAt: String(r["created_at"] ?? ""),
     })),
   });
