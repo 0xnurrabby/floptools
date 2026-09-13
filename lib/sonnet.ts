@@ -543,6 +543,9 @@ export async function acceptedBallotsByVoter(): Promise<{
        FROM sonnet_ballot_receipts WHERE reason = '' AND entry_id IS NOT NULL`,
     ),
   ]);
+  // safeQuery returns null on failure; a failed tally must throw, never
+  // masquerade as "zero ballots" (it would be cached as an empty snapshot).
+  if (!countRows || !rows) throw new Error("ballot tally unavailable");
   const proposals = Number(countRows?.[0]?.["n"] ?? 0);
   const last = new Map<string, AcceptedBallot>();
   for (const r of rows ?? []) {
