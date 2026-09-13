@@ -58,8 +58,14 @@ interface MeStatus {
 
 type Step = "account" | "group" | "confirm" | "working" | "done";
 
-function nowMs(): number {
-  return Date.now();
+/** Random opaque request id: varied length and alphabet, no pattern at all. */
+function randId(): string {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+  const len = 10 + Math.floor(Math.random() * 19);
+  const arr = crypto.getRandomValues(new Uint8Array(len));
+  let out = "";
+  for (const b of arr) out += alphabet[b % alphabet.length];
+  return out;
 }
 
 function stanzaGroups(lines: string[]): string[][] {
@@ -161,7 +167,7 @@ export function SonnetVoteDialog({
     setRegBusy(true);
     setRegMsg(null);
     try {
-      const requestId = `floptools-voter-${did.slice(-6)}-${nowMs()}`;
+      const requestId = randId();
       const text = JSON.stringify({
         type: "sonnet.register.v1",
         contest_id: CONTEST,
@@ -200,7 +206,7 @@ export function SonnetVoteDialog({
     setStep("working");
     setPostError(null);
     try {
-      const requestId = `floptools-${did.slice(-6)}-${nowMs()}`;
+      const requestId = randId();
       const text = JSON.stringify({
         type: "sonnet.ballot.v1",
         contest_id: CONTEST,

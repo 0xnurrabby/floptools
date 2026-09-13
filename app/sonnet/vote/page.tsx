@@ -24,8 +24,14 @@ interface MyStatus {
   entry: { gameId: string; entryId: string; votes: number; rank: number; entries: number } | null;
 }
 
-function nowMs(): number {
-  return Date.now();
+/** Random opaque request id: varied length and alphabet, no pattern at all. */
+function randId(): string {
+  const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
+  const len = 10 + Math.floor(Math.random() * 19);
+  const arr = crypto.getRandomValues(new Uint8Array(len));
+  let out = "";
+  for (const b of arr) out += alphabet[b % alphabet.length];
+  return out;
 }
 
 interface Member {
@@ -127,7 +133,7 @@ export default function SonnetVotePage() {
     setRegBusy(true);
     setRegMsg(null);
     try {
-      const requestId = `floptools-voter-${did.slice(-6)}-${nowMs()}`;
+      const requestId = randId();
       const text = JSON.stringify({
         type: "sonnet.register.v1",
         contest_id: CONTEST_ID,
