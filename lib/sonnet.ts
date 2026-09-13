@@ -1798,85 +1798,130 @@ export interface ExploiterRow {
 }
 
 const EXPLOITERS_KEY = "exploiters";
+const EXPLOITERS_PROGRESS_KEY = "exploiters_progress";
 const EXPLOITERS_TTL_MS = 10 * 60_000;
+const EXPLOITERS_BATCH = 6;
 let exploitersCache: { at: number; rows: ExploiterRow[] } | null = null;
-let exploitersInflight: Promise<ExploiterRow[]> | null = null;
 
-async function readExploitersDb(): Promise<{ at: number; rows: ExploiterRow[] } | null> {
+interface ExploitersProgress {
+  startedAt: number;
+  done: string[];
+  rows: ExploiterRow[];
+}
+
+async function readCacheJson<T>(key: string): Promise<{ at: number; data: T } | null> {
   const rows =
-    (await safeQuery("SELECT data, updated_at FROM sonnet_cache WHERE key = $1", [EXPLOITERS_KEY])) ?? [];
+    (await safeQuery("SELECT data, updated_at FROM sonnet_cache WHERE key = $1", [key])) ?? [];
   const r = rows[0];
   if (!r || !r["data"]) return null;
   const at = r["updated_at"] ? Date.parse(String(r["updated_at"])) : 0;
-  const data = r["data"];
-  if (!Array.isArray(data)) return null;
-  return { at: Number.isFinite(at) ? at : 0, rows: data as ExploiterRow[] };
+  return { at: Number.isFinite(at) ? at : 0, data: r["data"] as T };
 }
 
-async function writeExploitersDb(rows: ExploiterRow[]): Promise<void> {
+async function writeCacheJson(key: string, data: unknown): Promise<void> {
   await safeExec(
     `INSERT INTO sonnet_cache (key, data, updated_at) VALUES ($1, $2::jsonb, now())
      ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
-    [EXPLOITERS_KEY, JSON.stringify(rows)],
+    [key, JSON.stringify(data)],
   );
 }
 
-/** Score every entry with ballots using the public rug-report analysis. */
-function buildExploiters(): Promise<ExploiterRow[]> {
-  if (exploitersInflight) return exploitersInflight;
-  exploitersInflight = (async () => {
-    const overview = await loadSonnetOverview();
-    const entries = overview.teams.filter((t) => t.entryId).slice(0, 60);
-    const rows: ExploiterRow[] = [];
-    for (const t of entries) {
-      if (!t.entryId) continue;
-      try {
-        const report = await entryVoterReport(t.entryId);
-        rows.push({
-          entryId: t.entryId,
-          gameId: t.gameId,
-          votes: report.votes,
-          score: report.risk.score,
-          level: report.risk.level,
-          suspect: report.suspect,
-          evidence: report.evidence,
-        });
-      } catch {
-        /* one bad entry never blocks the board */
-      }
-    }
-    rows.sort((a, b) => b.score - a.score || b.votes - a.votes);
-    if (rows.length > 0) await writeExploitersDb(rows).catch(() => {});
-    exploitersCache = { at: Date.now(), rows };
-    return rows;
-  })().finally(() => {
-    exploitersInflight = null;
-  });
-  return exploitersInflight;
+async function clearCacheKey(key: string): Promise<void> {
+  await safeExec("DELETE FROM sonnet_cache WHERE key = $1", [key]);
+}
+
+async function readExploitersDb(): Promise<{ at: number; rows: ExploiterRow[] } | null> {
+  const hit = await readCacheJson<ExploiterRow[]>(EXPLOITERS_KEY);
+  if (!hit || !Array.isArray(hit.data)) return null;
+  return { at: hit.at, rows: hit.data };
 }
 
 /**
- * Exploit board, served instantly: memory, then the persisted snapshot, and a
- * background scan when stale. `building: true` means the numbers refresh soon.
+ * Exploit board, built in small request-driven batches (serverless background
+ * work gets frozen, so each call scans a few entries and persists progress).
+ * Warm results are instant; while scanning, partial rows are served with
+ * `building: true` and the UI keeps polling until the board is complete.
  */
 export async function topExploiters(): Promise<{
   rows: ExploiterRow[];
   building: boolean;
   at: string | null;
+  scanned: number;
+  total: number;
 }> {
   const now = Date.now();
   if (exploitersCache && now - exploitersCache.at < EXPLOITERS_TTL_MS) {
-    return { rows: exploitersCache.rows, building: false, at: new Date(exploitersCache.at).toISOString() };
+    return {
+      rows: exploitersCache.rows,
+      building: false,
+      at: new Date(exploitersCache.at).toISOString(),
+      scanned: exploitersCache.rows.length,
+      total: exploitersCache.rows.length,
+    };
   }
-  const db = await readExploitersDb().catch(() => null);
+  const db = await readExploitersDb();
   if (db && now - db.at < EXPLOITERS_TTL_MS) {
     exploitersCache = { at: db.at, rows: db.rows };
-    return { rows: db.rows, building: false, at: new Date(db.at).toISOString() };
+    return {
+      rows: db.rows,
+      building: false,
+      at: new Date(db.at).toISOString(),
+      scanned: db.rows.length,
+      total: db.rows.length,
+    };
   }
-  void buildExploiters().catch(() => {});
-  if (db) {
-    exploitersCache = { at: db.at, rows: db.rows };
-    return { rows: db.rows, building: true, at: new Date(db.at).toISOString() };
+
+  const overview = await loadSonnetOverview();
+  const entries = overview.teams.filter((t) => t.entryId).slice(0, 60);
+  if (entries.length === 0) {
+    return { rows: db?.rows ?? [], building: false, at: null, scanned: 0, total: 0 };
   }
-  return { rows: [], building: true, at: null };
+
+  let progress = (await readCacheJson<ExploitersProgress>(EXPLOITERS_PROGRESS_KEY).catch(() => null))
+    ?.data ?? null;
+  if (!progress || !Array.isArray(progress.done) || now - progress.startedAt > 30 * 60_000) {
+    progress = { startedAt: now, done: [], rows: [] };
+  }
+
+  const pending = entries.filter((t) => t.entryId && !progress.done.includes(t.entryId));
+  const batch = pending.slice(0, EXPLOITERS_BATCH);
+  for (const t of batch) {
+    if (!t.entryId) continue;
+    try {
+      const report = await entryVoterReport(t.entryId);
+      progress.rows.push({
+        entryId: t.entryId,
+        gameId: t.gameId,
+        votes: report.votes,
+        score: report.risk.score,
+        level: report.risk.level,
+        suspect: report.suspect,
+        evidence: report.evidence,
+      });
+    } catch {
+      /* one bad entry never blocks the board */
+    }
+    progress.done.push(t.entryId);
+  }
+
+  // Dedupe (a race between instances can scan the same entry twice) and rank.
+  const byEntry = new Map<string, ExploiterRow>();
+  for (const row of progress.rows) byEntry.set(row.entryId, row);
+  progress.rows = [...byEntry.values()].sort((a, b) => b.score - a.score || b.votes - a.votes);
+
+  const building = progress.done.length < entries.length;
+  if (building) {
+    await writeCacheJson(EXPLOITERS_PROGRESS_KEY, progress).catch(() => {});
+    return { rows: progress.rows, building: true, at: null, scanned: progress.done.length, total: entries.length };
+  }
+  exploitersCache = { at: Date.now(), rows: progress.rows };
+  await writeCacheJson(EXPLOITERS_KEY, progress.rows).catch(() => {});
+  await clearCacheKey(EXPLOITERS_PROGRESS_KEY).catch(() => {});
+  return {
+    rows: progress.rows,
+    building: false,
+    at: new Date().toISOString(),
+    scanned: entries.length,
+    total: entries.length,
+  };
 }
