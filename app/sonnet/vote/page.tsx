@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Button, Card, Note, Spinner, StatusChip, TextInput } from "@/components/ui";
 import { LocalTime } from "@/components/local-time";
@@ -60,10 +60,26 @@ interface Overview {
   ok: boolean;
   stale?: boolean;
   updatedAt: string;
+  cachedAt?: string;
   contest: { deadline: number; referee: string };
   teams: Team[];
   totals: { teams: number; entries: number; countedBallots: number; voters: number };
   writersIndexed: number;
+}
+
+/** Relative "updated X ago" that keeps itself fresh. */
+function Ago({ value }: { value?: string }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  if (!value) return null;
+  const t = Date.parse(value);
+  if (!Number.isFinite(t)) return null;
+  const mins = Math.max(0, Math.round((now - t) / 60_000));
+  const label = mins < 1 ? "just now" : mins < 60 ? `${mins} min ago` : `${Math.round(mins / 60)} h ago`;
+  return <>{label}</>;
 }
 
 type Sort = "votes" | "recent" | "alpha";
@@ -86,6 +102,7 @@ export default function SonnetVotePage() {
   const [myStatus, setMyStatus] = useState<MyStatus | null>(null);
   const [regBusy, setRegBusy] = useState(false);
   const [regMsg, setRegMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const lastLoadRef = useRef(0);
 
   const load = useCallback((fresh = false) => {
     return Promise.resolve()
@@ -99,7 +116,10 @@ export default function SonnetVotePage() {
             else setError("Could not read the contest rooms.");
           })
           .catch(() => setError("Could not read the contest rooms."))
-          .finally(() => setBusy(false));
+          .finally(() => {
+            lastLoadRef.current = Date.now();
+            setBusy(false);
+          });
       });
   }, []);
 
@@ -128,6 +148,30 @@ export default function SonnetVotePage() {
   useEffect(() => {
     void loadMe();
   }, [loadMe]);
+
+  /**
+   * Smart auto-refresh. The API serves a snapshot and quietly rebuilds it in
+   * the background when it goes stale, so simply re-asking brings the page up
+   * to date: on tab focus and every 90 seconds while the tab is visible. Never
+   * re-requests data younger than a minute, and never polls hidden tabs.
+   */
+  useEffect(() => {
+    const check = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      if (Date.now() - lastLoadRef.current < 60_000) return;
+      void load();
+      void loadMe();
+    };
+    const id = setInterval(check, 90_000);
+    const onWake = () => check();
+    document.addEventListener("visibilitychange", onWake);
+    window.addEventListener("focus", onWake);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onWake);
+      window.removeEventListener("focus", onWake);
+    };
+  }, [load, loadMe]);
 
   const registerAsVoter = async () => {
     if (!did || regBusy) return;
@@ -355,6 +399,9 @@ export default function SonnetVotePage() {
           <StatusChip tone="empty">{data.totals.voters} voters</StatusChip>
           {did ? <StatusChip tone="ok">signed in · able to ballot</StatusChip> : <StatusChip tone="warn">unlock an identity to ballot</StatusChip>}
           {handlesLoading ? <StatusChip tone="empty">loading X handles…</StatusChip> : null}
+          <StatusChip tone="empty">
+            {busy ? "updating…" : <>updated <Ago value={data.cachedAt ?? data.updatedAt} /></>}
+          </StatusChip>
         </div>
       ) : null}
 

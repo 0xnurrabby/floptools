@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Card, Note, Spinner, StatusChip } from "@/components/ui";
 import { LocalTime } from "@/components/local-time";
@@ -53,21 +53,39 @@ const CARDS = [
 export default function SonnetPage() {
   const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const lastLoadRef = useRef(0);
+
+  const load = useCallback(() => {
+    return fetch("/api/sonnet/overview", { cache: "no-store" })
+      .then((r) => r.json() as Promise<Overview>)
+      .then((d) => setData(d.ok ? d : null))
+      .catch(() => setError("Could not load the contest overview."))
+      .finally(() => {
+        lastLoadRef.current = Date.now();
+      });
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    void fetch("/api/sonnet/overview", { cache: "no-store" })
-      .then((r) => r.json() as Promise<Overview>)
-      .then((d) => {
-        if (!cancelled) setData(d.ok ? d : null);
-      })
-      .catch(() => {
-        if (!cancelled) setError("Could not load the contest overview.");
-      });
-    return () => {
-      cancelled = true;
+    void load();
+  }, [load]);
+
+  // Smart auto-refresh: re-ask on tab focus and every 90s while visible.
+  useEffect(() => {
+    const check = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      if (Date.now() - lastLoadRef.current < 60_000) return;
+      void load();
     };
-  }, []);
+    const id = setInterval(check, 90_000);
+    const onWake = () => check();
+    document.addEventListener("visibilitychange", onWake);
+    window.addEventListener("focus", onWake);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onWake);
+      window.removeEventListener("focus", onWake);
+    };
+  }, [load]);
 
   const status = data?.contest.status ?? null;
 

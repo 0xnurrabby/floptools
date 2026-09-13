@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Button, Card, Note, Spinner, StatusChip } from "@/components/ui";
 import { LocalTime } from "@/components/local-time";
@@ -29,8 +29,24 @@ interface Overview {
   ok: boolean;
   stale?: boolean;
   updatedAt: string;
+  cachedAt?: string;
   teams: Team[];
   totals: { teams: number; entries: number; ballots: number; countedBallots: number; voters: number };
+}
+
+/** Relative "updated X ago" that keeps itself fresh. */
+function Ago({ value }: { value?: string }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(id);
+  }, []);
+  if (!value) return null;
+  const t = Date.parse(value);
+  if (!Number.isFinite(t)) return null;
+  const mins = Math.max(0, Math.round((now - t) / 60_000));
+  const label = mins < 1 ? "just now" : mins < 60 ? `${mins} min ago` : `${Math.round(mins / 60)} h ago`;
+  return <>{label}</>;
 }
 
 export default function TopSonnetPage() {
@@ -38,6 +54,7 @@ export default function TopSonnetPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reportTarget, setReportTarget] = useState<Team | null>(null);
+  const lastLoadRef = useRef(0);
 
   const load = useCallback((fresh = false) => {
     return Promise.resolve()
@@ -51,12 +68,34 @@ export default function TopSonnetPage() {
             else setError("Could not read the contest rooms.");
           })
           .catch(() => setError("Could not read the contest rooms."))
-          .finally(() => setBusy(false));
+          .finally(() => {
+            lastLoadRef.current = Date.now();
+            setBusy(false);
+          });
       });
   }, []);
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  // Smart auto-refresh: re-ask on tab focus and every 90s while visible; the
+  // API rebuilds its snapshot in the background when it goes stale.
+  useEffect(() => {
+    const check = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+      if (Date.now() - lastLoadRef.current < 60_000) return;
+      void load();
+    };
+    const id = setInterval(check, 90_000);
+    const onWake = () => check();
+    document.addEventListener("visibilitychange", onWake);
+    window.addEventListener("focus", onWake);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onWake);
+      window.removeEventListener("focus", onWake);
+    };
   }, [load]);
 
   const entries = (data?.teams ?? []).filter((t) => t.entryId);
@@ -93,6 +132,9 @@ export default function TopSonnetPage() {
           <StatusChip tone="ok">{data.totals.countedBallots} counted ballots</StatusChip>
           <StatusChip tone="empty">{data.totals.voters} voters</StatusChip>
           <StatusChip tone="empty">{writing.length} teams still writing</StatusChip>
+          <StatusChip tone="empty">
+            {busy ? "updating…" : <>updated <Ago value={data.cachedAt ?? data.updatedAt} /></>}
+          </StatusChip>
         </div>
       ) : null}
 
