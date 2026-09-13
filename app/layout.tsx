@@ -18,6 +18,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "https://floptools.nurlab.xyz"),
   title: "floptools · keep one did:key alive on Technocore",
   description:
     "Local, unofficial toolkit for a single encrypted Ed25519 did:key identity on technocore.chat by FLOP Labs. Keys never leave your device. No eligibility, no token, no faucet.",
@@ -27,6 +28,13 @@ export const metadata: Metadata = {
     description:
       "Create one encrypted did:key locally, publish signed messages to Technocore, check your setup. Unofficial community tool.",
     type: "website",
+    siteName: "floptools",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "floptools · one did:key, kept alive",
+    description:
+      "Create one encrypted did:key locally, publish signed messages to Technocore, check your setup. Unofficial community tool.",
   },
   robots: { index: false, follow: false },
 };
