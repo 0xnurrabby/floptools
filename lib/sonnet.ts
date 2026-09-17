@@ -1380,14 +1380,18 @@ let overviewCache: { at: number; data: SonnetOverview } | null = null;
 let overviewInflight: Promise<SonnetOverview> | null = null;
 const OVERVIEW_TTL_MS = 60_000;
 const DB_CACHE_KEY = "overview";
+/** Last healthy snapshot, kept aside so a bad build can never blank the site. */
+const DB_CACHE_KEY_GOOD = "overview_good";
+const OVERVIEW_BUILD_TIMEOUT_MS = 45_000;
+let rebuildBlockedUntil = 0;
 
 export function sonnetOverviewCached(): SonnetOverview | null {
   return overviewCache?.data ?? null;
 }
 
-async function readDbSnapshot(): Promise<{ at: number; data: SonnetOverview } | null> {
+async function readDbSnapshotKey(key: string): Promise<{ at: number; data: SonnetOverview } | null> {
   const rows =
-    (await safeQuery("SELECT data, updated_at FROM sonnet_cache WHERE key = $1", [DB_CACHE_KEY])) ?? [];
+    (await safeQuery("SELECT data, updated_at FROM sonnet_cache WHERE key = $1", [key])) ?? [];
   const r = rows[0];
   if (!r || !r["data"]) return null;
   const at = r["updated_at"] ? Date.parse(String(r["updated_at"])) : 0;
@@ -1396,19 +1400,51 @@ async function readDbSnapshot(): Promise<{ at: number; data: SonnetOverview } | 
   return { at, data: { ...data, cachedAt: Number.isFinite(at) ? new Date(at).toISOString() : undefined } };
 }
 
+async function readDbSnapshot(): Promise<{ at: number; data: SonnetOverview } | null> {
+  return readDbSnapshotKey(DB_CACHE_KEY);
+}
+
 async function writeDbSnapshot(data: SonnetOverview): Promise<void> {
+  const json = JSON.stringify(data);
   await safeExec(
     `INSERT INTO sonnet_cache (key, data, updated_at) VALUES ($1, $2::jsonb, now())
      ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
-    [DB_CACHE_KEY, JSON.stringify(data)],
+    [DB_CACHE_KEY, json],
   );
+  // Keep a healthy copy under a second key: if the main one ever lands
+  // degenerate, the site still paints real numbers instantly.
+  await safeExec(
+    `INSERT INTO sonnet_cache (key, data, updated_at) VALUES ($1, $2::jsonb, now())
+     ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
+    [DB_CACHE_KEY_GOOD, json],
+  ).catch(() => {});
+}
+
+/** Kick a background rebuild at most once per 30s (failing builds must not hammer). */
+function scheduleRebuild(): void {
+  if (Date.now() < rebuildBlockedUntil) return;
+  rebuildBlockedUntil = Date.now() + 30_000;
+  void rebuildSnapshot().catch(() => {});
+}
+
+/** Await a rebuild with a hard cap, so a slow venue never hangs a request. */
+function buildBounded(ms: number): Promise<SonnetOverview> {
+  return Promise.race([
+    rebuildSnapshot(),
+    new Promise<never>((_, reject) => setTimeout(() => reject(new Error("overview build timed out")), ms)),
+  ]);
 }
 
 function rebuildSnapshot(): Promise<SonnetOverview> {
   if (overviewInflight) return overviewInflight;
   overviewInflight = (async () => {
     const previous = overviewCache?.data ?? (await readDbSnapshot().catch(() => null))?.data ?? null;
-    const data = await buildOverview();
+    const data = await Promise.race([
+      buildOverview(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("overview build timed out")), OVERVIEW_BUILD_TIMEOUT_MS),
+      ),
+    ]);
     // A room read or tally query can fail transiently; never let a reduced
     // snapshot replace a more complete one (the next cycle retries).
     const degraded =
@@ -1445,13 +1481,13 @@ export async function loadSonnetOverview(opts: { fresh?: boolean } = {}): Promis
   if (!opts.fresh && overviewCache && now - overviewCache.at < OVERVIEW_TTL_MS) {
     return overviewCache.data;
   }
-  if (opts.fresh) return rebuildSnapshot();
+  if (opts.fresh) return buildBounded(50_000);
 
   const dbCached = await readDbSnapshot().catch(() => null);
   if (dbCached) {
     overviewCache = { at: dbCached.at, data: dbCached.data };
     if (now - dbCached.at >= OVERVIEW_TTL_MS) {
-      void rebuildSnapshot().catch(() => {});
+      scheduleRebuild();
     }
     return dbCached.data;
   }
@@ -1470,14 +1506,49 @@ export async function sonnetOverviewFast(): Promise<{ data: SonnetOverview | nul
     return { data: overviewCache.data, building: false };
   }
   const dbCached = await readDbSnapshot().catch(() => null);
+  const degraded = dbCached ? await snapshotDegenerate(dbCached.data) : false;
+
+  if (degraded) {
+    // The main snapshot is broken. Prefer the healthy copy for an instant,
+    // correct paint, and repair the main one in the background.
+    const good = await readDbSnapshotKey(DB_CACHE_KEY_GOOD).catch(() => null);
+    if (good && !(await snapshotDegenerate(good.data))) {
+      overviewCache = { at: good.at || now, data: good.data };
+      scheduleRebuild();
+      return { data: good.data, building: true };
+    }
+    // No healthy copy anywhere: build now with a hard cap so the first
+    // visitor gets real numbers instead of zeros.
+    try {
+      const data = await buildBounded(25_000);
+      return { data, building: false };
+    } catch {
+      rebuildBlockedUntil = Date.now() + 60_000;
+      scheduleRebuild();
+      if (dbCached) {
+        overviewCache = { at: dbCached.at, data: dbCached.data };
+        return { data: dbCached.data, building: true };
+      }
+      return { data: overviewCache?.data ?? null, building: true };
+    }
+  }
+
   if (dbCached) {
     overviewCache = { at: dbCached.at, data: dbCached.data };
-    const stale = now - dbCached.at >= OVERVIEW_TTL_MS || (await snapshotDegenerate(dbCached.data));
-    if (stale) void rebuildSnapshot().catch(() => {});
+    const stale = now - dbCached.at >= OVERVIEW_TTL_MS;
+    if (stale) scheduleRebuild();
     return { data: dbCached.data, building: stale };
   }
-  void rebuildSnapshot().catch(() => {});
-  return { data: overviewCache?.data ?? null, building: true };
+
+  // Nothing persisted at all: bounded first build, then background retries.
+  try {
+    const data = await buildBounded(25_000);
+    return { data, building: false };
+  } catch {
+    rebuildBlockedUntil = Date.now() + 60_000;
+    scheduleRebuild();
+    return { data: overviewCache?.data ?? null, building: true };
+  }
 }
 
 /** True when a snapshot's totals contradict the ballot table (bad build). */
