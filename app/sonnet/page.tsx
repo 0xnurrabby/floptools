@@ -8,6 +8,7 @@ import { LocalTime } from "@/components/local-time";
 interface Overview {
   ok: boolean;
   building?: boolean;
+  dbError?: string | null;
   updatedAt: string;
   cachedAt?: string;
   contest: {
@@ -110,6 +111,15 @@ export default function SonnetPage() {
         FLOP is split between the winning team and the voters who backed it. Everything here reads
         the public contest rooms — nothing is simulated.
       </p>
+
+      {data?.dbError ? (
+        <div className="mt-4">
+          <Note tone="warn">
+            The stats database is unavailable right now: {data.dbError} The public ledger keeps
+            working; these numbers return as soon as the database limit is lifted.
+          </Note>
+        </div>
+      ) : null}
 
       {data ? (
         <div className="mt-5 flex flex-wrap items-center gap-2">

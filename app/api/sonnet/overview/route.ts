@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { lastDbError } from "@/lib/db";
 import {
   ingestBoards,
   loadSonnetOverview,
@@ -26,13 +27,23 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     if (withBoards) void ingestBoards({ fresh: true }).catch(() => {});
     if (fresh) {
       const data = await loadSonnetOverview({ fresh: true });
-      return NextResponse.json({ ok: true, building: false, ...data });
+      return NextResponse.json({ ok: true, building: false, dbError: lastDbError, ...data });
     }
     const { data, building } = await sonnetOverviewFast();
-    return NextResponse.json({ ok: true, building, ...(data ?? sonnetOverviewShell()) });
+    return NextResponse.json({
+      ok: true,
+      building,
+      dbError: lastDbError,
+      ...(data ?? sonnetOverviewShell()),
+    });
   } catch (e) {
     try {
-      return NextResponse.json({ ok: true, building: true, ...sonnetOverviewShell() });
+      return NextResponse.json({
+        ok: true,
+        building: true,
+        dbError: lastDbError,
+        ...sonnetOverviewShell(),
+      });
     } catch {
       return NextResponse.json(
         { ok: false, error: (e as Error).message.slice(0, 200) },

@@ -60,6 +60,7 @@ interface Overview {
   ok: boolean;
   stale?: boolean;
   building?: boolean;
+  dbError?: string | null;
   updatedAt: string;
   cachedAt?: string;
   contest: { deadline: number; referee: string };
@@ -395,6 +396,14 @@ export default function SonnetVotePage() {
       </div>
 
       {error ? <div className="mt-5"><Note tone="error">{error}</Note></div> : null}
+      {data?.dbError ? (
+        <div className="mt-5">
+          <Note tone="warn">
+            The stats database is unavailable right now: {data.dbError} The public ledger keeps
+            working; entries and ballots return as soon as the database limit is lifted.
+          </Note>
+        </div>
+      ) : null}
       {data ? (
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <StatusChip tone="ok">{entries.length} entries</StatusChip>

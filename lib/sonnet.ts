@@ -1378,7 +1378,9 @@ export async function entryVoterReport(entryId: string): Promise<VoterReport> {
 
 let overviewCache: { at: number; data: SonnetOverview } | null = null;
 let overviewInflight: Promise<SonnetOverview> | null = null;
-const OVERVIEW_TTL_MS = 60_000;
+// A hosted Postgres bills every byte it sends; rebuilding every minute moved
+// hundreds of MB per hour. Ten minutes per rebuild is plenty for a tally.
+const OVERVIEW_TTL_MS = 10 * 60_000;
 const DB_CACHE_KEY = "overview";
 /** Last healthy snapshot, kept aside so a bad build can never blank the site. */
 const DB_CACHE_KEY_GOOD = "overview_good";
@@ -1404,6 +1406,87 @@ async function readDbSnapshot(): Promise<{ at: number; data: SonnetOverview } | 
   return readDbSnapshotKey(DB_CACHE_KEY);
 }
 
+/** Generic small JSON cache helpers (sonnet_cache key/value). */
+async function readCacheJson<T>(key: string): Promise<{ at: number; data: T } | null> {
+  const rows =
+    (await safeQuery("SELECT data, updated_at FROM sonnet_cache WHERE key = $1", [key])) ?? [];
+  const r = rows[0];
+  if (!r || !r["data"]) return null;
+  const at = r["updated_at"] ? Date.parse(String(r["updated_at"])) : 0;
+  return { at: Number.isFinite(at) ? at : 0, data: r["data"] as T };
+}
+
+async function writeCacheJson(key: string, data: unknown): Promise<void> {
+  await safeExec(
+    `INSERT INTO sonnet_cache (key, data, updated_at) VALUES ($1, $2::jsonb, now())
+     ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
+    [key, JSON.stringify(data)],
+  );
+}
+
+async function clearCacheKey(key: string): Promise<void> {
+  await safeExec("DELETE FROM sonnet_cache WHERE key = $1", [key]);
+}
+
+const DIGEST_TTL_MS = 15 * 60_000;
+const TALLY_DIGEST_KEY = "tally_digest";
+const BOARDS_DIGEST_KEY = "boards_digest";
+
+/**
+ * The accepted-ballot tally is the heaviest read (tens of thousands of
+ * receipt rows). Keep the computed result for 15 minutes: a hosted Postgres
+ * charges for every byte it sends, and a tally cannot change that fast.
+ */
+async function acceptedBallotsDigest(): Promise<{
+  proposals: number;
+  last: Map<string, AcceptedBallot>;
+}> {
+  const hit = await readCacheJson<{ at: number; proposals: number; rows: AcceptedBallot[] }>(
+    TALLY_DIGEST_KEY,
+  ).catch(() => null);
+  if (hit && Date.now() - hit.data.at < DIGEST_TTL_MS && Array.isArray(hit.data.rows)) {
+    return {
+      proposals: hit.data.proposals,
+      last: new Map(hit.data.rows.map((b) => [b.did, b])),
+    };
+  }
+  const tally = await acceptedBallotsByVoter();
+  await writeCacheJson(TALLY_DIGEST_KEY, {
+    at: Date.now(),
+    proposals: tally.proposals,
+    rows: [...tally.last.values()],
+  }).catch(() => {});
+  return tally;
+}
+
+/** Only the message types the overview actually reads. */
+function trimBoard(room: string, messages: SonnetMessage[]): SonnetMessage[] {
+  if (room === SONNET.rooms.discovery) {
+    return messages.filter((m) => m.text.includes("sonnet.roster.v1"));
+  }
+  if (room === SONNET.rooms.submissions) {
+    return messages.filter((m) => m.text.includes("sonnet.submit.v1") || m.from === SONNET.referee);
+  }
+  return messages;
+}
+
+/** Board rooms with the same 15-minute digest treatment. */
+async function boardMessagesDigest(room: string): Promise<SonnetMessage[]> {
+  const hit = await readCacheJson<Record<string, { at: number; messages: SonnetMessage[] }>>(
+    BOARDS_DIGEST_KEY,
+  ).catch(() => null);
+  const entry = hit?.data?.[room];
+  if (entry && Date.now() - entry.at < DIGEST_TTL_MS && Array.isArray(entry.messages)) {
+    return entry.messages;
+  }
+  const messages = trimBoard(room, await boardMessages(room));
+  await writeCacheJson(BOARDS_DIGEST_KEY, {
+    ...(hit?.data ?? {}),
+    [room]: { at: Date.now(), messages },
+  }).catch(() => {});
+  return messages;
+}
+
 async function writeDbSnapshot(data: SonnetOverview): Promise<void> {
   const json = JSON.stringify(data);
   await safeExec(
@@ -1411,12 +1494,13 @@ async function writeDbSnapshot(data: SonnetOverview): Promise<void> {
      ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
     [DB_CACHE_KEY, json],
   );
-  // Keep a healthy copy under a second key: if the main one ever lands
-  // degenerate, the site still paints real numbers instantly.
+  // Copy the healthy snapshot inside the database itself: no bytes travel
+  // through the app for the backup copy.
   await safeExec(
-    `INSERT INTO sonnet_cache (key, data, updated_at) VALUES ($1, $2::jsonb, now())
-     ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
-    [DB_CACHE_KEY_GOOD, json],
+    `INSERT INTO sonnet_cache (key, data, updated_at)
+     SELECT $1, data, updated_at FROM sonnet_cache WHERE key = $2
+     ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, updated_at = EXCLUDED.updated_at`,
+    [DB_CACHE_KEY_GOOD, DB_CACHE_KEY],
   ).catch(() => {});
 }
 
@@ -1579,11 +1663,11 @@ async function buildOverview(): Promise<SonnetOverview> {
   return (async () => {
     const [rules, discovery, submissions, writers, roleRows, ballotTally] = await Promise.all([
       readSonnetRoom(SONNET.rooms.rules).catch(() => [] as SonnetMessage[]),
-      boardMessages(SONNET.rooms.discovery),
-      boardMessages(SONNET.rooms.submissions),
+      boardMessagesDigest(SONNET.rooms.discovery),
+      boardMessagesDigest(SONNET.rooms.submissions),
       writersFromDb().catch(() => new Map<string, WriterRow>()),
       safeQuery("SELECT role, COUNT(*) AS n FROM sonnet_writers GROUP BY role").catch(() => null),
-      acceptedBallotsByVoter().catch(() => null),
+      acceptedBallotsDigest().catch(() => null),
     ]);
     // A failed tally must never be persisted as "0 ballots": treat it as a
     // failed build and keep serving the previous snapshot.
@@ -1878,27 +1962,6 @@ interface ExploitersProgress {
   startedAt: number;
   done: string[];
   rows: ExploiterRow[];
-}
-
-async function readCacheJson<T>(key: string): Promise<{ at: number; data: T } | null> {
-  const rows =
-    (await safeQuery("SELECT data, updated_at FROM sonnet_cache WHERE key = $1", [key])) ?? [];
-  const r = rows[0];
-  if (!r || !r["data"]) return null;
-  const at = r["updated_at"] ? Date.parse(String(r["updated_at"])) : 0;
-  return { at: Number.isFinite(at) ? at : 0, data: r["data"] as T };
-}
-
-async function writeCacheJson(key: string, data: unknown): Promise<void> {
-  await safeExec(
-    `INSERT INTO sonnet_cache (key, data, updated_at) VALUES ($1, $2::jsonb, now())
-     ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, updated_at = now()`,
-    [key, JSON.stringify(data)],
-  );
-}
-
-async function clearCacheKey(key: string): Promise<void> {
-  await safeExec("DELETE FROM sonnet_cache WHERE key = $1", [key]);
 }
 
 async function readExploitersDb(): Promise<{ at: number; rows: ExploiterRow[] } | null> {

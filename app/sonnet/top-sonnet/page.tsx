@@ -29,6 +29,7 @@ interface Overview {
   ok: boolean;
   stale?: boolean;
   building?: boolean;
+  dbError?: string | null;
   updatedAt: string;
   cachedAt?: string;
   teams: Team[];
@@ -128,6 +129,14 @@ export default function TopSonnetPage() {
       </div>
 
       {error ? <div className="mt-5"><Note tone="error">{error}</Note></div> : null}
+      {data?.dbError ? (
+        <div className="mt-5">
+          <Note tone="warn">
+            The stats database is unavailable right now: {data.dbError} The public ledger keeps
+            working; the tally returns as soon as the database limit is lifted.
+          </Note>
+        </div>
+      ) : null}
 
       {data ? (
         <div className="mt-5 flex flex-wrap items-center gap-2">
