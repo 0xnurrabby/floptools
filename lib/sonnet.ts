@@ -308,8 +308,9 @@ interface WriterRow {
 }
 
 async function writersFromDb(): Promise<Map<string, WriterRow>> {
-  const rows =
-    (await safeQuery("SELECT did, x_account FROM sonnet_writers WHERE role = 'writer'")) ?? [];
+  const rows = await safeQuery("SELECT did, x_account FROM sonnet_writers WHERE role = 'writer'");
+  // Database unavailable: read the registration room live instead.
+  if (!rows) return (await liveRegistrations()).writers;
   const map = new Map<string, WriterRow>();
   for (const r of rows) {
     const did = String(r["did"] ?? "");
@@ -455,6 +456,28 @@ export async function ballotsForDid(did: string): Promise<StoredBallot[]> {
       [did],
     ),
   ]);
+  if (!ballotRows || !receiptRows) {
+    const { ballots, receipts } = parseLiveVotes(await liveVoteMessages());
+    const mine = new Map(
+      receipts.filter((r) => r.senderDid === did).map((r) => [r.requestId, r]),
+    );
+    return ballots
+      .filter((b) => b.did === did)
+      .map((b) => {
+        const r = mine.get(b.requestId);
+        const reason = r ? r.reason : null;
+        return {
+          seq: b.seq,
+          ts: b.ts,
+          entryId: b.entryId,
+          requestId: b.requestId,
+          status: r ? (reason ? "rejected" : "accepted") : "pending",
+          reason: reason || null,
+          receiptAt: r?.receivedAt ? new Date(r.receivedAt * 1000).toISOString() : null,
+          intakeSeq: r && Number.isFinite(r.intakeSeq) ? (r.intakeSeq as number) : null,
+        };
+      });
+  }
   const byReq = new Map<string, Row>();
   for (const r of receiptRows ?? []) byReq.set(String(r["request_id"] ?? ""), r);
   const seen = new Map<string, Row>();
@@ -485,16 +508,39 @@ export async function ballotsForDid(did: string): Promise<StoredBallot[]> {
 export async function ballotEventsForDids(dids: string[]): Promise<Map<string, StoredBallot[]>> {
   const map = new Map<string, StoredBallot[]>();
   if (dids.length === 0) return map;
-  const rows =
-    (await safeQuery(
-      `SELECT b.did, b.seq, b.ts, b.entry_id, b.request_id, r.reason, r.intake_seq, r.received_at
-       FROM sonnet_ballots b
-       LEFT JOIN sonnet_ballot_receipts r
-         ON r.request_id = b.request_id AND r.sender_did = b.did
-       WHERE b.did = ANY($1::text[])
-       ORDER BY b.seq ASC`,
-      [dids.slice(0, 500)],
-    )) ?? [];
+  const raw = await safeQuery(
+    `SELECT b.did, b.seq, b.ts, b.entry_id, b.request_id, r.reason, r.intake_seq, r.received_at
+     FROM sonnet_ballots b
+     LEFT JOIN sonnet_ballot_receipts r
+       ON r.request_id = b.request_id AND r.sender_did = b.did
+     WHERE b.did = ANY($1::text[])
+     ORDER BY b.seq ASC`,
+    [dids.slice(0, 500)],
+  );
+  if (!raw) {
+    const want = new Set(dids);
+    const { ballots, receipts } = parseLiveVotes(await liveVoteMessages());
+    const receiptBy = new Map(receipts.map((r) => [`${r.senderDid}|${r.requestId}`, r]));
+    for (const b of ballots) {
+      if (!want.has(b.did)) continue;
+      const r = receiptBy.get(`${b.did}|${b.requestId}`);
+      const reason = r ? r.reason : null;
+      const list = map.get(b.did) ?? [];
+      list.push({
+        seq: b.seq,
+        ts: b.ts,
+        entryId: b.entryId,
+        requestId: b.requestId,
+        status: r ? (reason ? "rejected" : "accepted") : "pending",
+        reason: reason || null,
+        receiptAt: r?.receivedAt ? new Date(r.receivedAt * 1000).toISOString() : null,
+        intakeSeq: r && Number.isFinite(r.intakeSeq) ? (r.intakeSeq as number) : null,
+      });
+      map.set(b.did, list);
+    }
+    return map;
+  }
+  const rows = raw;
   const seen = new Set<string>();
   for (const r of rows) {
     const did = String(r["did"] ?? "");
@@ -543,9 +589,26 @@ export async function acceptedBallotsByVoter(): Promise<{
        FROM sonnet_ballot_receipts WHERE reason = '' AND entry_id IS NOT NULL`,
     ),
   ]);
-  // safeQuery returns null on failure; a failed tally must throw, never
-  // masquerade as "zero ballots" (it would be cached as an empty snapshot).
-  if (!countRows || !rows) throw new Error("ballot tally unavailable");
+  // Database unavailable: read the votes room from the venue directly.
+  if (!countRows || !rows) {
+    const { ballots, receipts } = parseLiveVotes(await liveVoteMessages());
+    const last = new Map<string, AcceptedBallot>();
+    for (const r of receipts) {
+      if (r.reason || !r.entryId) continue;
+      const order = Number(r.intakeSeq ?? 0);
+      const prev = last.get(r.senderDid);
+      if (!prev || order >= (prev.intakeSeq ?? 0)) {
+        last.set(r.senderDid, {
+          did: r.senderDid,
+          entryId: r.entryId,
+          requestId: r.requestId,
+          intakeSeq: Number.isFinite(order) ? order : null,
+          receivedAt: r.receivedAt ? new Date(r.receivedAt * 1000).toISOString() : null,
+        });
+      }
+    }
+    return { proposals: ballots.length, last };
+  }
   const proposals = Number(countRows?.[0]?.["n"] ?? 0);
   const last = new Map<string, AcceptedBallot>();
   for (const r of rows ?? []) {
@@ -576,11 +639,18 @@ export async function ballotsByRequestIds(
 ): Promise<Map<string, { seq: number; ts: string; did: string }>> {
   const map = new Map<string, { seq: number; ts: string; did: string }>();
   if (ids.length === 0) return map;
-  const rows =
-    (await safeQuery(
-      `SELECT request_id, seq, ts, did FROM sonnet_ballots WHERE request_id = ANY($1::text[])`,
-      [ids.slice(0, 500)],
-    )) ?? [];
+  const rows = await safeQuery(
+    `SELECT request_id, seq, ts, did FROM sonnet_ballots WHERE request_id = ANY($1::text[])`,
+    [ids.slice(0, 500)],
+  );
+  if (!rows) {
+    const want = new Set(ids.slice(0, 500));
+    const { ballots } = parseLiveVotes(await liveVoteMessages());
+    for (const b of ballots) {
+      if (want.has(b.requestId)) map.set(b.requestId, { seq: b.seq, ts: b.ts, did: b.did });
+    }
+    return map;
+  }
   for (const r of rows) {
     map.set(String(r["request_id"] ?? ""), {
       seq: Number(r["seq"] ?? 0),
@@ -610,6 +680,104 @@ async function boardMessages(room: string): Promise<SonnetMessage[]> {
   return readSonnetRoom(room).catch(() => [] as SonnetMessage[]);
 }
 
+/* ---------------- live fallbacks (venue ledger, database aside) --------- */
+
+let liveRegCache: { at: number; messages: SonnetMessage[] } | null = null;
+let liveVotesCache: { at: number; messages: SonnetMessage[] } | null = null;
+
+/** Registration room with a short memory cache (multi-MB export). */
+async function liveRegistrationMessages(): Promise<SonnetMessage[]> {
+  if (liveRegCache && Date.now() - liveRegCache.at < 120_000) return liveRegCache.messages;
+  const messages = await readSonnetRoom(SONNET.rooms.registration);
+  liveRegCache = { at: Date.now(), messages };
+  return messages;
+}
+
+/** Votes room with a short memory cache (largest room on the venue). */
+async function liveVoteMessages(): Promise<SonnetMessage[]> {
+  if (liveVotesCache && Date.now() - liveVotesCache.at < 120_000) return liveVotesCache.messages;
+  const messages = await readSonnetRoom(SONNET.rooms.votes);
+  liveVotesCache = { at: Date.now(), messages };
+  return messages;
+}
+
+interface LiveRegParse {
+  rows: {
+    did: string;
+    seq: number;
+    ts: string;
+    role: string;
+    requestId: string;
+    receipt: "accepted" | "rejected" | "pending";
+    reason: string | null;
+    receiptAt: string | null;
+  }[];
+  writers: Map<string, WriterRow>;
+  roles: { writer: number; voter: number; organizer: number };
+}
+
+/** Parse registrations straight from the public room (no database). */
+async function liveRegistrations(): Promise<LiveRegParse> {
+  const messages = await liveRegistrationMessages();
+  const receipts = parseReceipts(messages);
+  const rows: LiveRegParse["rows"] = [];
+  const writers = new Map<string, WriterRow>();
+  const roles = { writer: 0, voter: 0, organizer: 0 };
+  const seen = new Set<string>();
+  for (const m of messages) {
+    const o = json(m.text);
+    if (!o || str(o.type) !== "sonnet.register.v1") continue;
+    if (str(o.contest_id) !== SONNET.contestId) continue;
+    const role = str(o.role);
+    if (role !== "writer" && role !== "voter" && role !== "organizer") continue;
+    const requestId = str(o.request_id);
+    const r = requestId
+      ? receipts.find((x) => x.requestId === requestId && x.senderDid === m.from)
+      : undefined;
+    rows.push({
+      did: m.from,
+      seq: m.seq,
+      ts: m.ts,
+      role,
+      requestId,
+      receipt: r ? (r.reason ? "rejected" : "accepted") : "pending",
+      reason: r?.reason ?? null,
+      receiptAt: r?.receivedAt ? new Date(r.receivedAt * 1000).toISOString() : null,
+    });
+    if (!seen.has(m.from)) {
+      seen.add(m.from);
+      if (role === "writer") roles.writer += 1;
+      else if (role === "voter") roles.voter += 1;
+      else roles.organizer += 1;
+      writers.set(m.from, {
+        did: m.from,
+        x_account: role === "writer" ? str(o.x_account_url) || null : null,
+      });
+    }
+  }
+  return { rows, writers, roles };
+}
+
+interface LiveVoteParse {
+  ballots: { seq: number; ts: string; did: string; entryId: string; requestId: string }[];
+  receipts: RefereeReceipt[];
+}
+
+/** Ballots + referee receipts straight from the public votes room. */
+function parseLiveVotes(messages: SonnetMessage[]): LiveVoteParse {
+  const ballots: LiveVoteParse["ballots"] = [];
+  for (const m of messages) {
+    if (m.from === SONNET.referee) continue;
+    const o = json(m.text);
+    if (!o) continue;
+    const entryId = str(o.entry_id);
+    const requestId = str(o.request_id);
+    if (!entryId || !requestId) continue;
+    ballots.push({ seq: m.seq, ts: m.ts, did: m.from, entryId, requestId });
+  }
+  return { ballots, receipts: parseReceipts(messages) };
+}
+
 export interface StoredRegistration {
   seq: number;
   ts: string;
@@ -626,12 +794,31 @@ export async function registrationsForDids(
 ): Promise<Map<string, StoredRegistration[]>> {
   const map = new Map<string, StoredRegistration[]>();
   if (dids.length === 0) return map;
-  const rows =
-    (await safeQuery(
-      `SELECT did, seq, ts, role, request_id, receipt, reason, receipt_at
-       FROM sonnet_registrations WHERE did = ANY($1::text[]) ORDER BY seq ASC`,
-      [dids.slice(0, 400)],
-    )) ?? [];
+  const rows = await safeQuery(
+    `SELECT did, seq, ts, role, request_id, receipt, reason, receipt_at
+     FROM sonnet_registrations WHERE did = ANY($1::text[]) ORDER BY seq ASC`,
+    [dids.slice(0, 400)],
+  );
+  if (!rows) {
+    // Database unavailable: parse the registration room live for these DIDs.
+    const want = new Set(dids.slice(0, 400));
+    const live = await liveRegistrations();
+    for (const r of live.rows) {
+      if (!want.has(r.did)) continue;
+      const list = map.get(r.did) ?? [];
+      list.push({
+        seq: r.seq,
+        ts: r.ts,
+        role: r.role,
+        requestId: r.requestId,
+        receipt: r.receipt,
+        reason: r.reason,
+        receiptAt: r.receiptAt,
+      });
+      map.set(r.did, list);
+    }
+    return map;
+  }
   for (const r of rows) {
     const did = String(r["did"] ?? "");
     if (!did) continue;
@@ -1680,12 +1867,22 @@ async function buildOverview(): Promise<SonnetOverview> {
       })
       .catch(() => {});
     const participants = { writers: 0, voters: 0, organizers: 0 };
-    for (const r of roleRows ?? []) {
-      const role = String(r["role"] ?? "");
-      const n = Number(r["n"] ?? 0);
-      if (role === "writer") participants.writers = n;
-      else if (role === "voter") participants.voters = n;
-      else if (role === "organizer") participants.organizers = n;
+    if (roleRows) {
+      for (const r of roleRows) {
+        const role = String(r["role"] ?? "");
+        const n = Number(r["n"] ?? 0);
+        if (role === "writer") participants.writers = n;
+        else if (role === "voter") participants.voters = n;
+        else if (role === "organizer") participants.organizers = n;
+      }
+    } else {
+      // Database unavailable: count roles from the live registration room.
+      const live = await liveRegistrations().catch(() => null);
+      if (live) {
+        participants.writers = live.roles.writer;
+        participants.voters = live.roles.voter;
+        participants.organizers = live.roles.organizer;
+      }
     }
 
     // Kick a background refresh of the writer index when needed (never blocks).
