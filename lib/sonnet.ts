@@ -373,7 +373,7 @@ export async function ballotsForDid(did: string): Promise<StoredBallot[]> {
     ),
   ]);
   if (!ballotRows || ballotRows.length === 0) {
-    const { ballots, receipts } = parseLiveVotes(await liveVoteMessages());
+    const { ballots, receipts } = await liveVoteParse();
     const mine = new Map(
       receipts.filter((r) => r.senderDid === did).map((r) => [r.requestId, r]),
     );
@@ -435,7 +435,7 @@ export async function ballotEventsForDids(dids: string[]): Promise<Map<string, S
   );
   if (!raw || raw.length === 0) {
     const want = new Set(dids);
-    const { ballots, receipts } = parseLiveVotes(await liveVoteMessages());
+    const { ballots, receipts } = await liveVoteParse();
     const receiptBy = new Map(receipts.map((r) => [`${r.senderDid}|${r.requestId}`, r]));
     for (const b of ballots) {
       if (!want.has(b.did)) continue;
@@ -508,7 +508,7 @@ export async function acceptedBallotsByVoter(): Promise<{
   // Ledger data is not persisted here: when the table is empty (normal now),
   // read the votes room from the venue directly.
   if (!countRows || !rows || rows.length === 0) {
-    const { ballots, receipts } = parseLiveVotes(await liveVoteMessages());
+    const { ballots, receipts } = await liveVoteParse();
     const last = new Map<string, AcceptedBallot>();
     for (const r of receipts) {
       if (r.reason || !r.entryId) continue;
@@ -562,7 +562,7 @@ export async function ballotsByRequestIds(
   );
   if (!rows || rows.length === 0) {
     const want = new Set(ids.slice(0, 500));
-    const { ballots } = parseLiveVotes(await liveVoteMessages());
+    const { ballots } = await liveVoteParse();
     for (const b of ballots) {
       if (want.has(b.requestId)) map.set(b.requestId, { seq: b.seq, ts: b.ts, did: b.did });
     }
@@ -696,6 +696,21 @@ function parseLiveVotes(messages: SonnetMessage[]): LiveVoteParse {
 }
 
 /**
+ * One parse of the votes room per instance/minute, reused by the tally, the
+ * per-entry ballot counts and the report paths: the export is multi-MB, so a
+ * single read must serve every consumer.
+ */
+let liveVoteParseMemo: { at: number; parse: LiveVoteParse } | null = null;
+async function liveVoteParse(): Promise<LiveVoteParse> {
+  if (liveVoteParseMemo && Date.now() - liveVoteParseMemo.at < 120_000) {
+    return liveVoteParseMemo.parse;
+  }
+  const parse = parseLiveVotes(await liveVoteMessages());
+  liveVoteParseMemo = { at: Date.now(), parse };
+  return parse;
+}
+
+/**
  * What the venue still retains, per entry: every ballot message, not just the
  * receipted ones. Referee receipts roll out of the rings much faster than
  * ballots, so this is the honest ranking basis in live mode.
@@ -705,7 +720,30 @@ async function liveBallotStats(): Promise<{
   total: number;
   voters: number;
 }> {
-  const { ballots } = parseLiveVotes(await liveVoteMessages());
+  const digest = await readCacheJson<{
+    at: number;
+    proposals: number;
+    rows: unknown[];
+    perEntry?: [string, number][];
+    voters?: number;
+  }>(TALLY_DIGEST_KEY).catch(() => null);
+  if (
+    digest &&
+    Date.now() - digest.data.at < DIGEST_TTL_MS &&
+    Array.isArray(digest.data.perEntry)
+  ) {
+    return {
+      perEntry: new Map(digest.data.perEntry),
+      total: digest.data.proposals,
+      voters:
+        typeof digest.data.voters === "number"
+          ? digest.data.voters
+          : Array.isArray(digest.data.rows)
+            ? digest.data.rows.length
+            : 0,
+    };
+  }
+  const { ballots } = await liveVoteParse();
   const perEntry = new Map<string, number>();
   const voters = new Set<string>();
   for (const b of ballots) {
@@ -1496,17 +1534,32 @@ async function acceptedBallotsDigest(): Promise<{
     };
   }
   const tally = await acceptedBallotsByVoter();
-  // Never cache an empty tally: it usually means the receipts table was still
-  // filling when the digest was written, and a zero would stick for 15 min.
-  if (tally.last.size > 0) {
+  // Never cache an empty tally, and keep the per-entry ballot counts in the
+  // same digest so a build never needs a second multi-MB read.
+  if (tally.proposals > 0 || tally.last.size > 0) {
+    const perEntry = new Map<string, number>();
+    const parse = await liveVoteParse().catch(() => null);
+    if (parse) {
+      const voters = new Set<string>();
+      for (const b of parse.ballots) {
+        perEntry.set(b.entryId, (perEntry.get(b.entryId) ?? 0) + 1);
+        voters.add(b.did);
+      }
+      lastVotersCount = voters.size;
+    }
     await writeCacheJson(TALLY_DIGEST_KEY, {
       at: Date.now(),
       proposals: tally.proposals,
       rows: [...tally.last.values()],
+      perEntry: [...perEntry.entries()],
+      voters: lastVotersCount,
     }).catch(() => {});
   }
   return tally;
 }
+
+/** Distinct voters seen in the last live parse (0 when unknown). */
+let lastVotersCount = 0;
 
 /** Only the message types the overview actually reads. */
 function trimBoard(room: string, messages: SonnetMessage[]): SonnetMessage[] {
