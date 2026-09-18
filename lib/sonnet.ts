@@ -1462,7 +1462,9 @@ const OVERVIEW_TTL_MS = 10 * 60_000;
 const DB_CACHE_KEY = "overview";
 /** Last healthy snapshot, kept aside so a bad build can never blank the site. */
 const DB_CACHE_KEY_GOOD = "overview_good";
-const OVERVIEW_BUILD_TIMEOUT_MS = 45_000;
+// A live rebuild reads several multi-MB venue rings; 90s lets it finish and
+// persist even when the request that triggered it gave up at its own cap.
+const OVERVIEW_BUILD_TIMEOUT_MS = 90_000;
 let rebuildBlockedUntil = 0;
 
 export function sonnetOverviewCached(): SonnetOverview | null {
