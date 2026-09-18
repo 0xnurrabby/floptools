@@ -115,8 +115,9 @@ export default function SonnetPage() {
       {data?.dbError ? (
         <div className="mt-4">
           <Note tone="warn">
-            The stats database is unavailable right now: {data.dbError} The public ledger keeps
-            working; these numbers return as soon as the database limit is lifted.
+            Live ledger mode: the stats database is unavailable ({data.dbError}) so these numbers
+            come straight from the venue&apos;s retained rooms — recent activity is real, but older
+            history returns only when the database is restored.
           </Note>
         </div>
       ) : null}

@@ -132,8 +132,9 @@ export default function TopSonnetPage() {
       {data?.dbError ? (
         <div className="mt-5">
           <Note tone="warn">
-            The stats database is unavailable right now: {data.dbError} The public ledger keeps
-            working; the tally returns as soon as the database limit is lifted.
+            Live ledger mode: the stats database is unavailable ({data.dbError}) so the tally comes
+            straight from the venue&apos;s retained votes room — recent ballots are real, but older
+            history returns only when the database is restored.
           </Note>
         </div>
       ) : null}

@@ -399,8 +399,9 @@ export default function SonnetVotePage() {
       {data?.dbError ? (
         <div className="mt-5">
           <Note tone="warn">
-            The stats database is unavailable right now: {data.dbError} The public ledger keeps
-            working; entries and ballots return as soon as the database limit is lifted.
+            Live ledger mode: the stats database is unavailable ({data.dbError}) so entries and
+            ballots come straight from the venue&apos;s retained rooms — recent activity is real, but
+            older history returns only when the database is restored.
           </Note>
         </div>
       ) : null}
