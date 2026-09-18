@@ -29,7 +29,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     if (withBoards) void ingestBoards({ fresh: true }).catch(() => {});
     // One votes-room parse per 15 minutes keeps the tiny per-entry aggregate
     // (a few KB) current without ever storing raw ledger rows.
-    await ensureBallotAggregate(40_000);
+    await ensureBallotAggregate(30_000);
     if (fresh) {
       const data = await loadSonnetOverview({ fresh: true });
       return NextResponse.json({ ok: true, building: false, dbError: lastDbError, ...data });

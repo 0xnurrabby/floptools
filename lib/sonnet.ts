@@ -1767,7 +1767,7 @@ export async function loadSonnetOverview(opts: { fresh?: boolean } = {}): Promis
   if (!opts.fresh && overviewCache && now - overviewCache.at < OVERVIEW_TTL_MS) {
     return overviewCache.data;
   }
-  if (opts.fresh) return buildBounded(50_000);
+  if (opts.fresh) return buildBounded(25_000);
 
   const dbCached = await readDbSnapshot().catch(() => null);
   if (dbCached) {
@@ -1806,7 +1806,7 @@ export async function sonnetOverviewFast(): Promise<{ data: SonnetOverview | nul
     // No healthy copy anywhere: build now with a hard cap so the first
     // visitor gets real numbers instead of zeros.
     try {
-      const data = await buildBounded(50_000);
+      const data = await buildBounded(25_000);
       return { data, building: false };
     } catch {
       rebuildBlockedUntil = Date.now() + 30_000;
@@ -1828,7 +1828,7 @@ export async function sonnetOverviewFast(): Promise<{ data: SonnetOverview | nul
 
   // Nothing persisted at all: bounded first build, then background retries.
   try {
-    const data = await buildBounded(50_000);
+    const data = await buildBounded(25_000);
     return { data, building: false };
   } catch {
     rebuildBlockedUntil = Date.now() + 30_000;
