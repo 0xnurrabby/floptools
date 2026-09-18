@@ -1946,6 +1946,31 @@ async function buildOverview(): Promise<SonnetOverview> {
     // the venue still retains for that entry (receipts roll out of the rings
     // much faster than ballot messages).
     const liveBallot = await liveBallotStats().catch(() => null);
+
+    // Entries can still receive ballots after their roster message rolled out
+    // of the discovery ring: add a ledger-only entry so those thousands of
+    // real votes are not invisible.
+    for (const [entryId] of liveBallot?.perEntry ?? []) {
+      if ([...teams.values()].some((t) => t.entryId === entryId)) continue;
+      teams.set(entryId, {
+        gameId: entryId,
+        poemRoom: `d-sonnet-2-team-${entryId}`,
+        roomGeneration: null,
+        members: [],
+        words: [],
+        lines: [],
+        complete: false,
+        wordCount: 0,
+        entryId,
+        eligibility: null,
+        xPostIds: [],
+        poemSha256: null,
+        votes: 0,
+        lastAt: "",
+        lastSeqByRoom: {},
+      });
+    }
+
     for (const team of teams.values()) {
       const counted = team.entryId ? (tally.get(team.entryId) ?? 0) : 0;
       const retained = team.entryId ? (liveBallot?.perEntry.get(team.entryId) ?? 0) : 0;
