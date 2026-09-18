@@ -690,17 +690,31 @@ let liveVotesCache: { at: number; messages: SonnetMessage[] } | null = null;
 /** Registration room with a short memory cache (multi-MB export). */
 async function liveRegistrationMessages(): Promise<SonnetMessage[]> {
   if (liveRegCache && Date.now() - liveRegCache.at < 120_000) return liveRegCache.messages;
-  const messages = await readSonnetRoom(SONNET.rooms.registration);
-  liveRegCache = { at: Date.now(), messages };
-  return messages;
+  try {
+    const messages = await readSonnetRoom(SONNET.rooms.registration);
+    liveRegCache = { at: Date.now(), messages };
+    return messages;
+  } catch {
+    // Export slow or refused: the retained tail still carries recent state.
+    const tail = await readSonnetTail(SONNET.rooms.registration, 200).catch(() => []);
+    liveRegCache = { at: Date.now(), messages: tail };
+    return tail;
+  }
 }
 
 /** Votes room with a short memory cache (largest room on the venue). */
 async function liveVoteMessages(): Promise<SonnetMessage[]> {
   if (liveVotesCache && Date.now() - liveVotesCache.at < 120_000) return liveVotesCache.messages;
-  const messages = await readSonnetRoom(SONNET.rooms.votes);
-  liveVotesCache = { at: Date.now(), messages };
-  return messages;
+  try {
+    const messages = await readSonnetRoom(SONNET.rooms.votes);
+    liveVotesCache = { at: Date.now(), messages };
+    return messages;
+  } catch {
+    // Export slow or refused: fall back to the newest retained tail.
+    const tail = await readSonnetTail(SONNET.rooms.votes, 200).catch(() => []);
+    liveVotesCache = { at: Date.now(), messages: tail };
+    return tail;
+  }
 }
 
 interface LiveRegParse {
@@ -1850,12 +1864,20 @@ export function sonnetOverviewShell(): SonnetOverview {
 
 async function buildOverview(): Promise<SonnetOverview> {
   return (async () => {
-    const [rules, discovery, submissions, writers, roleRows, ballotTally] = await Promise.all([
+    // The DB probe doubles as an availability check: when the index is down
+    // (quota, outage), skip the multi-MB registration read entirely — the
+    // heavy live path is the votes room, and participant counts can be
+    // derived from the boards. This keeps a live build inside a minute.
+    const roleRows = await safeQuery(
+      "SELECT role, COUNT(*) AS n FROM sonnet_writers GROUP BY role",
+    ).catch(() => null);
+    const [rules, discovery, submissions, writers, ballotTally] = await Promise.all([
       readSonnetRoom(SONNET.rooms.rules).catch(() => [] as SonnetMessage[]),
       boardMessagesDigest(SONNET.rooms.discovery),
       boardMessagesDigest(SONNET.rooms.submissions),
-      writersFromDb().catch(() => new Map<string, WriterRow>()),
-      safeQuery("SELECT role, COUNT(*) AS n FROM sonnet_writers GROUP BY role").catch(() => null),
+      roleRows
+        ? writersFromDb().catch(() => new Map<string, WriterRow>())
+        : Promise.resolve(new Map<string, WriterRow>()),
       acceptedBallotsDigest().catch(() => null),
     ]);
     // A failed tally must never be persisted as "0 ballots": treat it as a
@@ -1876,14 +1898,6 @@ async function buildOverview(): Promise<SonnetOverview> {
         if (role === "writer") participants.writers = n;
         else if (role === "voter") participants.voters = n;
         else if (role === "organizer") participants.organizers = n;
-      }
-    } else {
-      // Database unavailable: count roles from the live registration room.
-      const live = await liveRegistrations().catch(() => null);
-      if (live) {
-        participants.writers = live.roles.writer;
-        participants.voters = live.roles.voter;
-        participants.organizers = live.roles.organizer;
       }
     }
 
@@ -1943,6 +1957,17 @@ async function buildOverview(): Promise<SonnetOverview> {
           at: m.seq,
         });
       }
+    }
+
+    // Live mode (no DB index): derive participant counts from the boards so
+    // the header shows real numbers instead of zeros.
+    if (!roleRows) {
+      const members = new Set<string>();
+      for (const roster of rostersByGame.values()) {
+        for (const did of roster.members) members.add(did);
+      }
+      participants.writers = members.size;
+      participants.voters = ballotTally.last.size;
     }
 
     // --- accepted submissions -> entry ids ---
