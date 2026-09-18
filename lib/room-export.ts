@@ -10,7 +10,10 @@
  */
 
 const TTL_MS = 90_000;
-const FETCH_TIMEOUT_MS = 30_000;
+// Live-mode fallback favors speed: if the venue is slow to produce the full
+// ring, the newest retained tail answers in a second instead of stalling the
+// whole build for the 30s fetch timeout.
+const FETCH_TIMEOUT_MS = 12_000;
 
 const cache = new Map<string, { at: number; body: string }>();
 const inflight = new Map<string, Promise<string>>();
