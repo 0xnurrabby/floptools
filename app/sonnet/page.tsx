@@ -142,7 +142,7 @@ export default function SonnetPage() {
             {status?.writers || data.participants?.writers || data.writersIndexed || 0} writers
           </StatusChip>
           <StatusChip tone="ok">{status?.voters || data.participants?.voters || 0} voters</StatusChip>
-          <StatusChip tone="empty">{data.totals.countedBallots} counted ballots</StatusChip>
+          <StatusChip tone="empty">{data.totals.ballots} ballots on the ledger</StatusChip>
           {data.building ? <StatusChip tone="warn">refreshing…</StatusChip> : null}
           <span className="caption-sm text-mute">
             updated <LocalTime value={data.cachedAt ?? data.updatedAt} timeStyle="medium" />

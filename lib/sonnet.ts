@@ -695,6 +695,26 @@ function parseLiveVotes(messages: SonnetMessage[]): LiveVoteParse {
   return { ballots, receipts: parseReceipts(messages) };
 }
 
+/**
+ * What the venue still retains, per entry: every ballot message, not just the
+ * receipted ones. Referee receipts roll out of the rings much faster than
+ * ballots, so this is the honest ranking basis in live mode.
+ */
+async function liveBallotStats(): Promise<{
+  perEntry: Map<string, number>;
+  total: number;
+  voters: number;
+}> {
+  const { ballots } = parseLiveVotes(await liveVoteMessages());
+  const perEntry = new Map<string, number>();
+  const voters = new Set<string>();
+  for (const b of ballots) {
+    perEntry.set(b.entryId, (perEntry.get(b.entryId) ?? 0) + 1);
+    voters.add(b.did);
+  }
+  return { perEntry, total: ballots.length, voters: voters.size };
+}
+
 export interface StoredRegistration {
   seq: number;
   ts: string;
@@ -1922,9 +1942,14 @@ async function buildOverview(): Promise<SonnetOverview> {
     };
     await Promise.all(Array.from({ length: Math.min(8, toLoad.length) }, worker));
 
-    // votes
+    // votes: referee-receipted count when available, otherwise every ballot
+    // the venue still retains for that entry (receipts roll out of the rings
+    // much faster than ballot messages).
+    const liveBallot = await liveBallotStats().catch(() => null);
     for (const team of teams.values()) {
-      team.votes = team.entryId ? (tally.get(team.entryId) ?? 0) : 0;
+      const counted = team.entryId ? (tally.get(team.entryId) ?? 0) : 0;
+      const retained = team.entryId ? (liveBallot?.perEntry.get(team.entryId) ?? 0) : 0;
+      team.votes = Math.max(counted, retained);
     }
 
     const teamsArr = [...teams.values()].sort(
@@ -1962,9 +1987,9 @@ async function buildOverview(): Promise<SonnetOverview> {
       totals: {
         teams: teamsArr.length,
         entries: teamsArr.filter((t) => t.entryId).length,
-        ballots: ballotProposals,
+        ballots: Math.max(ballotProposals, liveBallot?.total ?? 0),
         countedBallots: acceptedBallots.size,
-        voters: acceptedBallots.size,
+        voters: Math.max(acceptedBallots.size, liveBallot?.voters ?? 0),
       },
       participants,
       writersIndexed: writers.size,

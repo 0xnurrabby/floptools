@@ -66,7 +66,7 @@ interface Overview {
   cachedAt?: string;
   contest: { deadline: number; referee: string };
   teams: Team[];
-  totals: { teams: number; entries: number; countedBallots: number; voters: number };
+  totals: { teams: number; entries: number; ballots: number; countedBallots: number; voters: number };
   writersIndexed: number;
 }
 
@@ -416,7 +416,8 @@ export default function SonnetVotePage() {
       {data ? (
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <StatusChip tone="ok">{entries.length} entries</StatusChip>
-          <StatusChip tone="ok">{data.totals.countedBallots} counted ballots</StatusChip>
+          <StatusChip tone="ok">{data.totals.countedBallots} receipted</StatusChip>
+          <StatusChip tone="empty">{data.totals.ballots} ballots on the ledger</StatusChip>
           <StatusChip tone="empty">{data.totals.voters} voters</StatusChip>
           {did ? <StatusChip tone="ok">signed in · able to ballot</StatusChip> : <StatusChip tone="warn">unlock an identity to ballot</StatusChip>}
           {handlesLoading ? <StatusChip tone="empty">loading X handles…</StatusChip> : null}

@@ -150,7 +150,8 @@ export default function TopSonnetPage() {
       {data ? (
         <div className="mt-5 flex flex-wrap items-center gap-2">
           <StatusChip tone="ok">{data.totals.entries} entries</StatusChip>
-          <StatusChip tone="ok">{data.totals.countedBallots} counted ballots</StatusChip>
+          <StatusChip tone="ok">{data.totals.countedBallots} receipted</StatusChip>
+          <StatusChip tone="empty">{data.totals.ballots} ballots on the ledger</StatusChip>
           <StatusChip tone="empty">{data.totals.voters} voters</StatusChip>
           <StatusChip tone="empty">{writing.length} teams still writing</StatusChip>
           <StatusChip tone="empty">
