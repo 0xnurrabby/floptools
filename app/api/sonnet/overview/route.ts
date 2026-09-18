@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { lastDbError } from "@/lib/db";
 import {
   ingestBoards,
+  lastOverviewBuild,
   loadSonnetOverview,
   refreshWriters,
   sonnetOverviewFast,
@@ -34,6 +35,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
       ok: true,
       building,
       dbError: lastDbError,
+      build: lastOverviewBuild,
       ...(data ?? sonnetOverviewShell()),
     });
   } catch (e) {

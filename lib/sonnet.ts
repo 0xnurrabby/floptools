@@ -1628,8 +1628,12 @@ function buildBounded(ms: number): Promise<SonnetOverview> {
   ]);
 }
 
+/** Last rebuild outcome, exposed for diagnostics on the API. */
+export let lastOverviewBuild: { at: number; ms: number; error?: string } | null = null;
+
 function rebuildSnapshot(): Promise<SonnetOverview> {
   if (overviewInflight) return overviewInflight;
+  const started = Date.now();
   overviewInflight = (async () => {
     const memoryPrev = overviewCache?.data ?? null;
     const dbPrev = (await readDbSnapshot().catch(() => null))?.data ?? null;
@@ -1663,9 +1667,22 @@ function rebuildSnapshot(): Promise<SonnetOverview> {
     overviewCache = { at: Date.now(), data };
     await writeDbSnapshot(data);
     return data;
-  })().finally(() => {
-    overviewInflight = null;
-  });
+  })()
+    .then((data) => {
+      lastOverviewBuild = { at: Date.now(), ms: Date.now() - started };
+      return data;
+    })
+    .catch((e) => {
+      lastOverviewBuild = {
+        at: Date.now(),
+        ms: Date.now() - started,
+        error: (e as Error).message.slice(0, 160),
+      };
+      throw e;
+    })
+    .finally(() => {
+      overviewInflight = null;
+    });
   return overviewInflight;
 }
 
