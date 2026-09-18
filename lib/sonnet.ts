@@ -720,6 +720,12 @@ async function liveBallotStats(): Promise<{
   total: number;
   voters: number;
 }> {
+  // The tiny derived aggregate is preferred: it is written by one votes-room
+  // parse and survives ring rolls.
+  const agg = await ballotAggregate();
+  if (agg) {
+    return { perEntry: new Map(agg.perEntry), total: agg.total, voters: agg.voters };
+  }
   const digest = await readCacheJson<{
     at: number;
     proposals: number;
@@ -1511,6 +1517,83 @@ async function clearCacheKey(key: string): Promise<void> {
 const DIGEST_TTL_MS = 15 * 60_000;
 const TALLY_DIGEST_KEY = "tally_digest";
 const BOARDS_DIGEST_KEY = "boards_digest";
+const BALLOT_AGG_KEY = "ballot_aggregate";
+
+interface BallotAggregate {
+  at: number;
+  /** Every ballot message the venue still retains for each entry. */
+  perEntry: [string, number][];
+  total: number;
+  voters: number;
+  proposals: number;
+  /** Each voter's last accepted ballot (receipted). */
+  accepted: AcceptedBallot[];
+}
+
+let aggregateInflight: Promise<void> | null = null;
+
+/**
+ * Refresh the tiny derived aggregate (a few KB, never raw rows): one votes-room
+ * parse, per-entry ballot counts and the receipted tally. This is the only
+ * place that reads the multi-MB votes ring, so builds stay cheap and numbers
+ * stay correct even after the ring rolls.
+ */
+export async function refreshBallotAggregate(): Promise<void> {
+  if (aggregateInflight) return aggregateInflight;
+  aggregateInflight = (async () => {
+    const { ballots, receipts } = await liveVoteParse();
+    const perEntry = new Map<string, number>();
+    const voters = new Set<string>();
+    for (const b of ballots) {
+      perEntry.set(b.entryId, (perEntry.get(b.entryId) ?? 0) + 1);
+      voters.add(b.did);
+    }
+    const last = new Map<string, AcceptedBallot>();
+    for (const r of receipts) {
+      if (r.reason || !r.entryId) continue;
+      const order = Number(r.intakeSeq ?? 0);
+      const prev = last.get(r.senderDid);
+      if (!prev || order >= (prev.intakeSeq ?? 0)) {
+        last.set(r.senderDid, {
+          did: r.senderDid,
+          entryId: r.entryId,
+          requestId: r.requestId,
+          intakeSeq: Number.isFinite(order) ? order : null,
+          receivedAt: r.receivedAt ? new Date(r.receivedAt * 1000).toISOString() : null,
+        });
+      }
+    }
+    const aggregate: BallotAggregate = {
+      at: Date.now(),
+      perEntry: [...perEntry.entries()],
+      total: ballots.length,
+      voters: voters.size,
+      proposals: ballots.length,
+      accepted: [...last.values()],
+    };
+    await writeCacheJson(BALLOT_AGG_KEY, aggregate).catch(() => {});
+  })().finally(() => {
+    aggregateInflight = null;
+  });
+  return aggregateInflight;
+}
+
+/** Aggregate if it exists, regardless of age (a stale one still beats zero). */
+async function ballotAggregate(): Promise<BallotAggregate | null> {
+  const hit = await readCacheJson<BallotAggregate>(BALLOT_AGG_KEY).catch(() => null);
+  if (!hit || !Array.isArray(hit.data?.perEntry)) return null;
+  return hit.data;
+}
+
+/** Await one aggregate refresh, capped so a slow venue never hangs a request. */
+export async function ensureBallotAggregate(maxMs = 40_000): Promise<void> {
+  const fresh = await ballotAggregate();
+  if (fresh && Date.now() - fresh.at < DIGEST_TTL_MS) return;
+  await Promise.race([
+    refreshBallotAggregate(),
+    new Promise<void>((resolve) => setTimeout(resolve, maxMs)),
+  ]).catch(() => {});
+}
 
 /**
  * The accepted-ballot tally is the heaviest read (tens of thousands of
@@ -1520,7 +1603,15 @@ const BOARDS_DIGEST_KEY = "boards_digest";
 async function acceptedBallotsDigest(): Promise<{
   proposals: number;
   last: Map<string, AcceptedBallot>;
-}> {
+} | null> {
+  // Preferred: the tiny aggregate written by a single votes-room parse.
+  const agg = await ballotAggregate();
+  if (agg && Date.now() - agg.at < DIGEST_TTL_MS) {
+    return {
+      proposals: agg.proposals,
+      last: new Map(agg.accepted.map((b) => [b.did, b])),
+    };
+  }
   const hit = await readCacheJson<{ at: number; proposals: number; rows: AcceptedBallot[] }>(
     TALLY_DIGEST_KEY,
   ).catch(() => null);
@@ -1535,33 +1626,11 @@ async function acceptedBallotsDigest(): Promise<{
       last: new Map(hit.data.rows.map((b) => [b.did, b])),
     };
   }
-  const tally = await acceptedBallotsByVoter();
-  // Never cache an empty tally, and keep the per-entry ballot counts in the
-  // same digest so a build never needs a second multi-MB read.
-  if (tally.proposals > 0 || tally.last.size > 0) {
-    const perEntry = new Map<string, number>();
-    const parse = await liveVoteParse().catch(() => null);
-    if (parse) {
-      const voters = new Set<string>();
-      for (const b of parse.ballots) {
-        perEntry.set(b.entryId, (perEntry.get(b.entryId) ?? 0) + 1);
-        voters.add(b.did);
-      }
-      lastVotersCount = voters.size;
-    }
-    await writeCacheJson(TALLY_DIGEST_KEY, {
-      at: Date.now(),
-      proposals: tally.proposals,
-      rows: [...tally.last.values()],
-      perEntry: [...perEntry.entries()],
-      voters: lastVotersCount,
-    }).catch(() => {});
-  }
-  return tally;
+  // No tiny cache yet: ask for one refresh in the background and let this
+  // build serve the previous snapshot instead of hammering the big ring.
+  void refreshBallotAggregate().catch(() => {});
+  return null;
 }
-
-/** Distinct voters seen in the last live parse (0 when unknown). */
-let lastVotersCount = 0;
 
 /** Only the message types the overview actually reads. */
 function trimBoard(room: string, messages: SonnetMessage[]): SonnetMessage[] {

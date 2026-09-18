@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { lastDbError } from "@/lib/db";
 import {
+  ensureBallotAggregate,
   ingestBoards,
   lastOverviewBuild,
   loadSonnetOverview,
@@ -26,6 +27,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   try {
     if (withWriters) void refreshWriters().catch(() => {});
     if (withBoards) void ingestBoards({ fresh: true }).catch(() => {});
+    // One votes-room parse per 15 minutes keeps the tiny per-entry aggregate
+    // (a few KB) current without ever storing raw ledger rows.
+    await ensureBallotAggregate(40_000);
     if (fresh) {
       const data = await loadSonnetOverview({ fresh: true });
       return NextResponse.json({ ok: true, building: false, dbError: lastDbError, ...data });
