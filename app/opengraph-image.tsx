@@ -1,9 +1,8 @@
 import { ImageResponse } from "next/og";
 
 /**
- * Site-wide social preview card. Lives at the root, so every path that does
- * not define its own image (the sonnet report pages do) shares this card on
- * X, Telegram, Discord and anywhere else that reads Open Graph tags.
+ * Site-wide social preview card. Lives at the root, so every path shares this
+ * card on X, Telegram, Discord and anywhere else that reads Open Graph tags.
  */
 
 export const alt = "floptools · keep one did:key alive";
@@ -67,7 +66,7 @@ export default function Image() {
             Create, sign, check, and deal with a single encrypted Ed25519 identity on Technocore.
           </div>
           <div style={{ display: "flex", gap: 14, marginTop: 10 }}>
-            {["Create", "Sign", "Activity", "Deal", "Sonnet", "Check", "Trustcore"].map((t) => (
+            {["Create", "Sign", "Activity", "Deal", "Check", "Trustcore"].map((t) => (
               <div
                 key={t}
                 style={{

@@ -10,7 +10,6 @@ const LINKS = [
   { href: "/sign", label: "Sign" },
   { href: "/activity", label: "Activity" },
   { href: "/deal", label: "Deal" },
-  { href: "/sonnet", label: "Sonnet" },
   { href: "/check", label: "Check" },
   { href: "/trustcore", label: "Trustcore" },
   { href: "/docs", label: "Docs" },
