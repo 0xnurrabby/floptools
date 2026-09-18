@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { loadOverviewCache, saveOverviewCache } from "@/lib/overview-cache";
 import { Button, Card, Note, Spinner, StatusChip } from "@/components/ui";
 import { LocalTime } from "@/components/local-time";
 import { SonnetVoterReport } from "@/components/sonnet-voter-report";
@@ -66,8 +67,10 @@ export default function TopSonnetPage() {
         return fetch(`/api/sonnet/overview${fresh ? "?fresh=1" : ""}`, { cache: "no-store" })
           .then((r) => r.json() as Promise<Overview>)
           .then((d) => {
-            if (d.ok) setData(d);
-            else setError("Could not read the contest rooms.");
+            if (d.ok) {
+              setData(d);
+              saveOverviewCache(d);
+            } else setError("Could not read the contest rooms.");
           })
           .catch(() => setError("Could not read the contest rooms."))
           .finally(() => {
@@ -78,6 +81,11 @@ export default function TopSonnetPage() {
   }, []);
 
   useEffect(() => {
+    // Paint the last good snapshot immediately; the fetch replaces it.
+    void Promise.resolve().then(() => {
+      const cached = loadOverviewCache<Overview>();
+      if (cached) setData((prev) => prev ?? cached);
+    });
     void load();
   }, [load]);
 

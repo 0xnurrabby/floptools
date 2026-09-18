@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Card, Note, Spinner, StatusChip } from "@/components/ui";
 import { LocalTime } from "@/components/local-time";
+import { loadOverviewCache, saveOverviewCache } from "@/lib/overview-cache";
 
 interface Overview {
   ok: boolean;
@@ -65,7 +66,14 @@ export default function SonnetPage() {
   const load = useCallback(() => {
     return fetch("/api/sonnet/overview", { cache: "no-store" })
       .then((r) => r.json() as Promise<Overview>)
-      .then((d) => setData(d.ok ? d : null))
+      .then((d) => {
+        if (d.ok) {
+          setData(d);
+          saveOverviewCache(d);
+        } else {
+          setData(null);
+        }
+      })
       .catch(() => setError("Could not load the contest overview."))
       .finally(() => {
         lastLoadRef.current = Date.now();
@@ -73,6 +81,11 @@ export default function SonnetPage() {
   }, []);
 
   useEffect(() => {
+    // Paint the last good snapshot immediately; the fetch replaces it.
+    void Promise.resolve().then(() => {
+      const cached = loadOverviewCache<Overview>();
+      if (cached) setData((prev) => prev ?? cached);
+    });
     void load();
   }, [load]);
 

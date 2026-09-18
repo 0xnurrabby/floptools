@@ -8,6 +8,7 @@ import { useSession } from "@/components/use-session";
 import { SonnetVoteDialog } from "@/components/sonnet-vote-dialog";
 import { signDraft } from "@/lib/keyring";
 import { getClient } from "@/lib/client";
+import { loadOverviewCache, saveOverviewCache } from "@/lib/overview-cache";
 
 const REGISTRATION_ROOM = "mb-sonnet-2-registration";
 const CONTEST_ID = "sonnet-2";
@@ -114,8 +115,10 @@ export default function SonnetVotePage() {
         return fetch(`/api/sonnet/overview${fresh ? "?fresh=1" : ""}`, { cache: "no-store" })
           .then((r) => r.json() as Promise<Overview>)
           .then((d) => {
-            if (d.ok) setData(d);
-            else setError("Could not read the contest rooms.");
+            if (d.ok) {
+              setData(d);
+              saveOverviewCache(d);
+            } else setError("Could not read the contest rooms.");
           })
           .catch(() => setError("Could not read the contest rooms."))
           .finally(() => {
@@ -126,6 +129,11 @@ export default function SonnetVotePage() {
   }, []);
 
   useEffect(() => {
+    // Paint the last good snapshot immediately; the fetch replaces it.
+    void Promise.resolve().then(() => {
+      const cached = loadOverviewCache<Overview>();
+      if (cached) setData((prev) => prev ?? cached);
+    });
     void load();
   }, [load]);
 
