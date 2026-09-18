@@ -1647,18 +1647,27 @@ async function acceptedBallotsDigest(): Promise<{
   const hit = await readCacheJson<{ at: number; proposals: number; rows: AcceptedBallot[] }>(
     TALLY_DIGEST_KEY,
   ).catch(() => null);
-  if (hit && Date.now() - hit.data.at < DIGEST_TTL_MS && Array.isArray(hit.data.rows)) {
+  if (
+    hit &&
+    Date.now() - hit.data.at < DIGEST_TTL_MS &&
+    Array.isArray(hit.data.rows) &&
+    hit.data.rows.length > 0
+  ) {
     return {
       proposals: hit.data.proposals,
       last: new Map(hit.data.rows.map((b) => [b.did, b])),
     };
   }
   const tally = await acceptedBallotsByVoter();
-  await writeCacheJson(TALLY_DIGEST_KEY, {
-    at: Date.now(),
-    proposals: tally.proposals,
-    rows: [...tally.last.values()],
-  }).catch(() => {});
+  // Never cache an empty tally: it usually means the receipts table was still
+  // filling when the digest was written, and a zero would stick for 15 min.
+  if (tally.last.size > 0) {
+    await writeCacheJson(TALLY_DIGEST_KEY, {
+      at: Date.now(),
+      proposals: tally.proposals,
+      rows: [...tally.last.values()],
+    }).catch(() => {});
+  }
   return tally;
 }
 
