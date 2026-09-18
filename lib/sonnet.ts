@@ -1533,15 +1533,61 @@ interface BallotAggregate {
 let aggregateInflight: Promise<void> | null = null;
 
 /**
+ * The venue throttles the huge single export from datacenter IPs, so the raw
+ * ring is scanned in small pages (200 messages each, a few workers).
+ */
+async function scanRoomPaginated(room: string, workers = 6): Promise<SonnetMessage[]> {
+  const client = new TechnocoreClient({ mode: "direct" });
+  const meta = await client.readRoom(room, { limit: 1 });
+  const first = Number(meta.first_seq ?? 0);
+  const last = Number(meta.last_seq ?? 0);
+  if (!Number.isFinite(first) || !Number.isFinite(last) || last < first) return [];
+  const pageSize = 200;
+  const starts: number[] = [];
+  for (let s = first; s <= last; s += pageSize) starts.push(s);
+  const out: SonnetMessage[] = [];
+  let cursor = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(workers, starts.length) }, async () => {
+      for (;;) {
+        const i = cursor++;
+        if (i >= starts.length) return;
+        try {
+          const read = await client.readRoom(room, { since: starts[i]! - 1, limit: pageSize });
+          for (const m of read.messages) {
+            if (typeof m.from !== "string" || typeof m.text !== "string") continue;
+            out.push({
+              room,
+              seq: typeof m.seq === "number" ? m.seq : 0,
+              from: m.from,
+              text: m.text,
+              ts: typeof m.ts === "string" ? m.ts : "",
+            });
+          }
+        } catch {
+          /* a dropped page never blocks the rest */
+        }
+      }
+    }),
+  );
+  out.sort((a, b) => a.seq - b.seq);
+  return out;
+}
+
+/**
  * Refresh the tiny derived aggregate (a few KB, never raw rows): one votes-room
- * parse, per-entry ballot counts and the receipted tally. This is the only
+ * scan, per-entry ballot counts and the receipted tally. This is the only
  * place that reads the multi-MB votes ring, so builds stay cheap and numbers
  * stay correct even after the ring rolls.
  */
 export async function refreshBallotAggregate(): Promise<void> {
   if (aggregateInflight) return aggregateInflight;
   aggregateInflight = (async () => {
-    const { ballots, receipts } = await liveVoteParse();
+    const messages = await scanRoomPaginated(SONNET.rooms.votes);
+    if (messages.length === 0) throw new Error("votes room scan returned nothing");
+    liveVotesCache = { at: Date.now(), messages };
+    liveVoteParseMemo = null;
+    const { ballots, receipts } = parseLiveVotes(messages);
     const perEntry = new Map<string, number>();
     const voters = new Set<string>();
     for (const b of ballots) {
