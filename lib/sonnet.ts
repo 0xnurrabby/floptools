@@ -43,7 +43,9 @@ export interface SonnetMessage {
 /* ---------------- room reads (cached per instance) ---------------- */
 
 const roomCache = new Map<string, { at: number; messages: SonnetMessage[] }>();
-const ROOM_TTL_MS = 60_000;
+// Live room exports are multi-MB; a longer memory TTL keeps a hot instance
+// from re-downloading the same ring every minute (and saves venue bandwidth).
+const ROOM_TTL_MS = 10 * 60_000;
 const roomInflight = new Map<string, Promise<SonnetMessage[]>>();
 
 function parseExport(room: string, body: string): SonnetMessage[] {
@@ -1791,10 +1793,10 @@ export async function sonnetOverviewFast(): Promise<{ data: SonnetOverview | nul
     // No healthy copy anywhere: build now with a hard cap so the first
     // visitor gets real numbers instead of zeros.
     try {
-      const data = await buildBounded(25_000);
+      const data = await buildBounded(50_000);
       return { data, building: false };
     } catch {
-      rebuildBlockedUntil = Date.now() + 60_000;
+      rebuildBlockedUntil = Date.now() + 30_000;
       scheduleRebuild();
       if (dbCached) {
         overviewCache = { at: dbCached.at, data: dbCached.data };
@@ -1813,10 +1815,10 @@ export async function sonnetOverviewFast(): Promise<{ data: SonnetOverview | nul
 
   // Nothing persisted at all: bounded first build, then background retries.
   try {
-    const data = await buildBounded(25_000);
+    const data = await buildBounded(50_000);
     return { data, building: false };
   } catch {
-    rebuildBlockedUntil = Date.now() + 60_000;
+    rebuildBlockedUntil = Date.now() + 30_000;
     scheduleRebuild();
     return { data: overviewCache?.data ?? null, building: true };
   }
