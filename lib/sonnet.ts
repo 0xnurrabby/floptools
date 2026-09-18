@@ -309,17 +309,19 @@ interface WriterRow {
   x_account: string | null;
 }
 
-async function writersFromDb(): Promise<Map<string, WriterRow>> {
-  const rows = await safeQuery("SELECT did, x_account FROM sonnet_writers WHERE role = 'writer'");
-  // Database unavailable: read the registration room live instead.
-  if (!rows) return (await liveRegistrations()).writers;
-  const map = new Map<string, WriterRow>();
-  for (const r of rows) {
-    const did = String(r["did"] ?? "");
-    if (!did) continue;
-    map.set(did, { did, x_account: (r["x_account"] as string) ?? null });
-  }
-  return map;
+/* Writer handles/roles in memory only: the venue is the source of truth and
+ * nothing derived from the public ledger is stored in the database. */
+const WRITERS_TTL_MS = 15 * 60_000;
+let writersMemo: {
+  at: number;
+  writers: Map<string, WriterRow>;
+  roles: { writer: number; voter: number; organizer: number };
+} | null = null;
+
+/** Warm handles from the last registration parse, or an empty map. */
+function writersFromCache(): Map<string, WriterRow> {
+  if (writersMemo && Date.now() - writersMemo.at < WRITERS_TTL_MS) return writersMemo.writers;
+  return new Map();
 }
 
 /* ---- persisted board messages (votes/submissions/discovery) ---- */
@@ -343,101 +345,13 @@ export async function readSonnetMessagesDb(room: string): Promise<SonnetMessage[
     .filter((m) => m.from !== "" && m.text !== "");
 }
 
-async function persistSonnetMessages(room: string, messages: SonnetMessage[]): Promise<void> {
-  for (let i = 0; i < messages.length; i += 150) {
-    const chunk = messages.slice(i, i + 150);
-    const values: unknown[] = [];
-    const placeholders = chunk.map((m, j) => {
-      values.push(m.room, m.seq, m.ts, m.from, m.text);
-      const b = j * 5;
-      return `($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5})`;
-    });
-    await safeExec(
-      `INSERT INTO sonnet_messages (room, seq, ts, did, text)
-       VALUES ${placeholders.join(",")}
-       ON CONFLICT (room, seq) DO NOTHING`,
-      values,
-    );
-  }
-}
-
-let boardIngest: Promise<void> | null = null;
-
-/** Read the board rooms once and persist them (background, bounded). */
+/** Ledger data stays on the venue: warm memory caches, never the database. */
 export async function ingestBoards(opts: { fresh?: boolean } = {}): Promise<void> {
-  if (boardIngest) return boardIngest;
-  boardIngest = (async () => {
-    await Promise.all(
-      BOARD_ROOMS.map(async (room) => {
-        try {
-          const messages = await readSonnetRoom(room, { fresh: opts.fresh });
-          await persistSonnetMessages(room, messages);
-          if (room === SONNET.rooms.votes) await persistBallots(messages);
-        } catch {
-          /* keep what the DB has */
-        }
-      }),
-    );
-  })().finally(() => {
-    boardIngest = null;
-  });
-  return boardIngest;
+  void opts;
+  await Promise.all(
+    BOARD_ROOMS.map((room) => readSonnetRoom(room).catch(() => [] as SonnetMessage[])),
+  );
 }
-
-/** Parse the votes room into ballots + receipts (hot-path tables). */
-async function persistBallots(messages: SonnetMessage[]): Promise<void> {
-  const ballots: { seq: number; ts: string; did: string; entryId: string; requestId: string }[] = [];
-  for (const m of messages) {
-    const o = json(m.text);
-    if (!o || str(o.type) !== "sonnet.ballot.v1") continue;
-    const entryId = str(o.entry_id);
-    const requestId = str(o.request_id);
-    if (!entryId || !requestId) continue;
-    ballots.push({ seq: m.seq, ts: m.ts, did: m.from, entryId, requestId });
-  }
-  const receipts = parseReceipts(messages).filter((r) => r.senderDid !== "");
-  // Dedupe first: repeated rows inside one INSERT would make the conflict
-  // clause fail ("cannot affect row a second time") and lose the whole chunk.
-  const ballotMap = new Map<string, (typeof ballots)[number]>();
-  for (const b of ballots) ballotMap.set(b.requestId, b);
-  const uniqueBallots = [...ballotMap.values()];
-  const receiptMap = new Map<string, (typeof receipts)[number]>();
-  for (const r of receipts) receiptMap.set(`${r.requestId}|${r.senderDid}`, r);
-  const uniqueReceipts = [...receiptMap.values()];
-  for (let i = 0; i < uniqueBallots.length; i += 200) {
-    const chunk = uniqueBallots.slice(i, i + 200);
-    const values: unknown[] = [];
-    const ph = chunk.map((b, j) => {
-      values.push(b.seq, b.ts, b.did, b.entryId, b.requestId);
-      const k = j * 5;
-      return `($${k + 1},$${k + 2},$${k + 3},$${k + 4},$${k + 5})`;
-    });
-    // Targetless ON CONFLICT: tolerates whichever unique key exists (seq
-    // historically, request_id now) without failing the chunk.
-    await safeExec(
-      `INSERT INTO sonnet_ballots (seq, ts, did, entry_id, request_id)
-       VALUES ${ph.join(",")} ON CONFLICT DO NOTHING`,
-      values,
-    );
-  }
-  for (let i = 0; i < uniqueReceipts.length; i += 200) {
-    const chunk = uniqueReceipts.slice(i, i + 200);
-    const values: unknown[] = [];
-    const ph = chunk.map((r, j) => {
-      values.push(r.requestId, r.senderDid, r.entryId ?? null, r.reason, r.intakeSeq ?? null, r.receivedAt ?? null);
-      const k = j * 6;
-      return `($${k + 1},$${k + 2},$${k + 3},$${k + 4},$${k + 5},$${k + 6})`;
-    });
-    await safeExec(
-      `INSERT INTO sonnet_ballot_receipts (request_id, sender_did, entry_id, reason, intake_seq, received_at)
-       VALUES ${ph.join(",")}
-       ON CONFLICT (request_id, sender_did) DO UPDATE SET entry_id = EXCLUDED.entry_id, reason = EXCLUDED.reason,
-         intake_seq = EXCLUDED.intake_seq, received_at = EXCLUDED.received_at`,
-      values,
-    );
-  }
-}
-
 export interface StoredBallot {
   seq: number;
   ts: string;
@@ -458,7 +372,7 @@ export async function ballotsForDid(did: string): Promise<StoredBallot[]> {
       [did],
     ),
   ]);
-  if (!ballotRows || !receiptRows) {
+  if (!ballotRows || ballotRows.length === 0) {
     const { ballots, receipts } = parseLiveVotes(await liveVoteMessages());
     const mine = new Map(
       receipts.filter((r) => r.senderDid === did).map((r) => [r.requestId, r]),
@@ -519,7 +433,7 @@ export async function ballotEventsForDids(dids: string[]): Promise<Map<string, S
      ORDER BY b.seq ASC`,
     [dids.slice(0, 500)],
   );
-  if (!raw) {
+  if (!raw || raw.length === 0) {
     const want = new Set(dids);
     const { ballots, receipts } = parseLiveVotes(await liveVoteMessages());
     const receiptBy = new Map(receipts.map((r) => [`${r.senderDid}|${r.requestId}`, r]));
@@ -591,8 +505,9 @@ export async function acceptedBallotsByVoter(): Promise<{
        FROM sonnet_ballot_receipts WHERE reason = '' AND entry_id IS NOT NULL`,
     ),
   ]);
-  // Database unavailable: read the votes room from the venue directly.
-  if (!countRows || !rows) {
+  // Ledger data is not persisted here: when the table is empty (normal now),
+  // read the votes room from the venue directly.
+  if (!countRows || !rows || rows.length === 0) {
     const { ballots, receipts } = parseLiveVotes(await liveVoteMessages());
     const last = new Map<string, AcceptedBallot>();
     for (const r of receipts) {
@@ -645,7 +560,7 @@ export async function ballotsByRequestIds(
     `SELECT request_id, seq, ts, did FROM sonnet_ballots WHERE request_id = ANY($1::text[])`,
     [ids.slice(0, 500)],
   );
-  if (!rows) {
+  if (!rows || rows.length === 0) {
     const want = new Set(ids.slice(0, 500));
     const { ballots } = parseLiveVotes(await liveVoteMessages());
     for (const b of ballots) {
@@ -663,22 +578,8 @@ export async function ballotsByRequestIds(
   return map;
 }
 
-async function boardsStale(): Promise<boolean> {
-  const rows =
-    (await safeQuery(
-      `SELECT MAX(created_at) AS at FROM sonnet_messages WHERE room = $1`,
-      [SONNET.rooms.votes],
-    )) ?? [];
-  const at = rows[0]?.["at"] ? Date.parse(String(rows[0]?.["at"])) : 0;
-  return !at || Date.now() - at > 15 * 60_000;
-}
-
-/** Board messages from the DB when available, live as a cold fallback. */
+/** Board messages straight from the venue (nothing is persisted here). */
 async function boardMessages(room: string): Promise<SonnetMessage[]> {
-  const stored = await readSonnetMessagesDb(room).catch(() => [] as SonnetMessage[]);
-  if (stored.length > 0) return stored;
-  // Cold index: heal in the background and answer from the live room once.
-  void ingestBoards().catch(() => {});
   return readSonnetRoom(room).catch(() => [] as SonnetMessage[]);
 }
 
@@ -815,8 +716,8 @@ export async function registrationsForDids(
      FROM sonnet_registrations WHERE did = ANY($1::text[]) ORDER BY seq ASC`,
     [dids.slice(0, 400)],
   );
-  if (!rows) {
-    // Database unavailable: parse the registration room live for these DIDs.
+  if (!rows || rows.length === 0) {
+    // Ledger data is not persisted here: parse the registration room live.
     const want = new Set(dids.slice(0, 400));
     const live = await liveRegistrations();
     for (const r of live.rows) {
@@ -853,15 +754,6 @@ export async function registrationsForDids(
   return map;
 }
 
-async function writersFresh(): Promise<boolean> {
-  const rows =
-    (await safeQuery("SELECT COUNT(*) AS n, MAX(updated_at) AS at FROM sonnet_writers")) ?? [];
-  const n = Number(rows[0]?.["n"] ?? 0);
-  const at = rows[0]?.["at"] ? Date.parse(String(rows[0]?.["at"])) : 0;
-  if (n === 0) return false;
-  return Date.now() - at < 15 * 60_000;
-}
-
 export interface WriterRefreshInfo {
   parsed: number;
   inserted: number;
@@ -874,96 +766,21 @@ let writerIngest: Promise<WriterRefreshInfo> | null = null;
 async function ingestWriters(fresh = false): Promise<WriterRefreshInfo> {
   if (writerIngest) return writerIngest;
   writerIngest = (async (): Promise<WriterRefreshInfo> => {
-    const info: WriterRefreshInfo = { parsed: 0, inserted: 0 };
     try {
-      // A just-posted registration must be visible immediately, so an explicit
-      // refresh bypasses the room snapshot cache.
+      // Registration data is public ledger data: parse it into memory only.
       const messages = await readSonnetRoom(SONNET.rooms.registration, { fresh });
-      const regReceipts = parseReceipts(messages);
-      const rows: { did: string; role: string; x: string | null }[] = [];
-      const seen = new Set<string>();
-      const events: {
-        did: string;
-        seq: number;
-        ts: string;
-        role: string;
-        requestId: string;
-        receipt: string;
-        reason: string;
-        receiptAt: string | null;
-      }[] = [];
-      for (const m of messages) {
-        const o = json(m.text);
-        if (!o || str(o.type) !== "sonnet.register.v1") continue;
-        if (str(o.contest_id) !== SONNET.contestId) continue;
-        const role = str(o.role);
-        if (role !== "writer" && role !== "voter" && role !== "organizer") continue;
-        const requestId = str(o.request_id);
-        if (requestId) {
-          const r = regReceipts.find((x) => x.requestId === requestId && x.senderDid === m.from);
-          events.push({
-            did: m.from,
-            seq: m.seq,
-            ts: m.ts,
-            role,
-            requestId,
-            receipt: r ? (r.reason ? "rejected" : "accepted") : "pending",
-            reason: r?.reason ?? "",
-            receiptAt: r?.receivedAt ? new Date(r.receivedAt * 1000).toISOString() : null,
-          });
-        }
-        if (seen.has(m.from)) continue;
-        seen.add(m.from);
-        rows.push({
-          did: m.from,
-          role,
-          x: role === "writer" ? str(o.x_account_url) || null : null,
-        });
-      }
-      info.parsed = rows.length;
-      // Every registration message, kept in the DB so reports and status reads
-      // never have to scan the (multi-MB) registration room again.
-      for (let i = 0; i < events.length; i += 200) {
-        const chunk = events.slice(i, i + 200);
-        const values: unknown[] = [];
-        const placeholders = chunk.map((e, j) => {
-          values.push(e.did, e.seq, e.ts, e.role, e.requestId, e.receipt, e.reason, e.receiptAt);
-          const b = j * 8;
-          return `($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7},$${b + 8})`;
-        });
-        await safeExec(
-          `INSERT INTO sonnet_registrations (did, seq, ts, role, request_id, receipt, reason, receipt_at)
-           VALUES ${placeholders.join(",")}
-           ON CONFLICT (did, seq) DO UPDATE SET receipt = EXCLUDED.receipt, reason = EXCLUDED.reason, receipt_at = EXCLUDED.receipt_at`,
-          values,
-        );
-      }
-      for (let i = 0; i < rows.length; i += 200) {
-        const chunk = rows.slice(i, i + 200);
-        const values: unknown[] = [];
-        const placeholders = chunk.map((r, j) => {
-          values.push(r.did, r.role, r.x);
-          return `($${j * 3 + 1},$${j * 3 + 2},$${j * 3 + 3})`;
-        });
-        await safeExec(
-          `INSERT INTO sonnet_writers (did, role, x_account)
-           VALUES ${placeholders.join(",")}
-           ON CONFLICT (did) DO UPDATE SET role = EXCLUDED.role, x_account = EXCLUDED.x_account, updated_at = now()`,
-          values,
-        );
-        info.inserted += chunk.length;
-      }
+      liveRegCache = { at: Date.now(), messages };
+      const parsed = await liveRegistrations();
+      writersMemo = { at: Date.now(), writers: parsed.writers, roles: parsed.roles };
+      return { parsed: parsed.rows.length, inserted: 0 };
     } catch (e) {
-      info.error = (e as Error).message.slice(0, 200);
+      return { parsed: 0, inserted: 0, error: (e as Error).message.slice(0, 200) };
     }
-    return info;
   })().finally(() => {
     writerIngest = null;
   });
   return writerIngest;
 }
-
-/** Await a writer-index refresh (used by explicit ?writers=1 / ?refresh=1). */
 export async function refreshWriters(opts: { fresh?: boolean } = {}): Promise<WriterRefreshInfo> {
   return ingestWriters(opts.fresh === true);
 }
@@ -1716,6 +1533,13 @@ async function writeDbSnapshot(data: SonnetOverview): Promise<void> {
   ).catch(() => {});
 }
 
+/** Which snapshot carries more real information? */
+function richerSnapshot(a: SonnetOverview, b: SonnetOverview): SonnetOverview {
+  const score = (s: SonnetOverview) =>
+    s.teams.length * 10 + s.totals.entries * 10 + s.totals.countedBallots;
+  return score(a) >= score(b) ? a : b;
+}
+
 /** Kick a background rebuild at most once per 30s (failing builds must not hammer). */
 function scheduleRebuild(): void {
   if (Date.now() < rebuildBlockedUntil) return;
@@ -1734,7 +1558,12 @@ function buildBounded(ms: number): Promise<SonnetOverview> {
 function rebuildSnapshot(): Promise<SonnetOverview> {
   if (overviewInflight) return overviewInflight;
   overviewInflight = (async () => {
-    const previous = overviewCache?.data ?? (await readDbSnapshot().catch(() => null))?.data ?? null;
+    const memoryPrev = overviewCache?.data ?? null;
+    const dbPrev = (await readDbSnapshot().catch(() => null))?.data ?? null;
+    // Compare against the stronger of the two views: concurrent instances can
+    // otherwise overwrite a complete snapshot with a reduced one.
+    const previous =
+      !memoryPrev ? dbPrev : !dbPrev ? memoryPrev : richerSnapshot(memoryPrev, dbPrev);
     const data = await Promise.race([
       buildOverview(),
       new Promise<never>((_, reject) =>
@@ -1884,23 +1713,15 @@ async function buildOverview(): Promise<SonnetOverview> {
       readSonnetRoom(SONNET.rooms.rules).catch(() => [] as SonnetMessage[]),
       boardMessagesDigest(SONNET.rooms.discovery),
       boardMessagesDigest(SONNET.rooms.submissions),
-      roleRows
-        ? writersFromDb().catch(() => new Map<string, WriterRow>())
-        : Promise.resolve(new Map<string, WriterRow>()),
+      Promise.resolve(writersFromCache()),
       acceptedBallotsDigest().catch(() => null),
     ]);
     // A failed tally must never be persisted as "0 ballots": treat it as a
     // failed build and keep serving the previous snapshot.
     if (!ballotTally) throw new Error("ballot tally unavailable");
 
-    // Keep the persisted board fresh in the background (never blocks).
-    void boardsStale()
-      .then((stale) => {
-        if (stale) void ingestBoards();
-      })
-      .catch(() => {});
     const participants = { writers: 0, voters: 0, organizers: 0 };
-    if (roleRows) {
+    if (roleRows && roleRows.length > 0) {
       for (const r of roleRows) {
         const role = String(r["role"] ?? "");
         const n = Number(r["n"] ?? 0);
@@ -1908,14 +1729,15 @@ async function buildOverview(): Promise<SonnetOverview> {
         else if (role === "voter") participants.voters = n;
         else if (role === "organizer") participants.organizers = n;
       }
+    } else if (writersMemo && Date.now() - writersMemo.at < WRITERS_TTL_MS) {
+      participants.writers = writersMemo.roles.writer;
+      participants.voters = writersMemo.roles.voter;
+      participants.organizers = writersMemo.roles.organizer;
     }
 
-    // Kick a background refresh of the writer index when needed (never blocks).
-    void writersFresh()
-      .then((ok) => {
-        if (!ok) void ingestWriters();
-      })
-      .catch(() => {});
+    // Handle lookups come from the last live registration parse (memory), so
+    // a build never downloads the multi-MB registration room itself.
+    // (long-running writer index trigger removed: ledger data stays on the venue)
 
     // --- referee status (latest sonnet.notice.v1 in rules) ---
     let status: SonnetOverview["contest"]["status"] = null;
@@ -1970,13 +1792,13 @@ async function buildOverview(): Promise<SonnetOverview> {
 
     // Live mode (no DB index): derive participant counts from the boards so
     // the header shows real numbers instead of zeros.
-    if (!roleRows) {
+    if (!roleRows || roleRows.length === 0) {
       const members = new Set<string>();
       for (const roster of rostersByGame.values()) {
         for (const did of roster.members) members.add(did);
       }
-      participants.writers = members.size;
-      participants.voters = ballotTally.last.size;
+      participants.writers = Math.max(participants.writers, members.size);
+      participants.voters = Math.max(participants.voters, ballotTally.last.size);
     }
 
     // --- accepted submissions -> entry ids ---
