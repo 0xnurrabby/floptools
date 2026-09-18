@@ -1534,18 +1534,43 @@ let aggregateInflight: Promise<void> | null = null;
 
 /**
  * The venue throttles the huge single export from datacenter IPs, so the raw
- * ring is scanned in small pages (200 messages each, a few workers).
+ * ring is scanned in small pages. `since=0` reads from the oldest retained
+ * message; `since=<seq>` continues from a watermark; no `since` reads the
+ * newest tail. Pages run a few at a time so a long ring still fits a request.
  */
 async function scanRoomPaginated(room: string, workers = 6): Promise<SonnetMessage[]> {
   const client = new TechnocoreClient({ mode: "direct" });
-  const meta = await client.readRoom(room, { limit: 1 });
-  const first = Number(meta.first_seq ?? 0);
-  const last = Number(meta.last_seq ?? 0);
-  if (!Number.isFinite(first) || !Number.isFinite(last) || last < first) return [];
   const pageSize = 200;
+  const collect = (messages: { seq?: number; from?: unknown; text?: unknown; ts?: unknown }[]) => {
+    const out: SonnetMessage[] = [];
+    for (const m of messages) {
+      if (typeof m.from !== "string" || typeof m.text !== "string") continue;
+      out.push({
+        room,
+        seq: typeof m.seq === "number" ? m.seq : 0,
+        from: m.from,
+        text: m.text,
+        ts: typeof m.ts === "string" ? m.ts : "",
+      });
+    }
+    return out;
+  };
+
+  const firstPage = await client.readRoom(room, { since: 0, limit: pageSize });
+  const out: SonnetMessage[] = collect(firstPage.messages ?? []);
+  if (out.length === 0) return out;
+
+  const newest = await client.readRoom(room, { limit: 1 });
+  const newestSeq = Number(newest.last_seq ?? 0);
+  let watermark = Number(firstPage.last_seq ?? out[out.length - 1]!.seq);
+  if (!Number.isFinite(watermark) || watermark <= 0) watermark = out[out.length - 1]!.seq;
+  if (newestSeq <= watermark) {
+    out.sort((a, b) => a.seq - b.seq);
+    return out;
+  }
+
   const starts: number[] = [];
-  for (let s = first; s <= last; s += pageSize) starts.push(s);
-  const out: SonnetMessage[] = [];
+  for (let s = watermark + 1; s <= newestSeq; s += pageSize) starts.push(s);
   let cursor = 0;
   await Promise.all(
     Array.from({ length: Math.min(workers, starts.length) }, async () => {
@@ -1554,16 +1579,7 @@ async function scanRoomPaginated(room: string, workers = 6): Promise<SonnetMessa
         if (i >= starts.length) return;
         try {
           const read = await client.readRoom(room, { since: starts[i]! - 1, limit: pageSize });
-          for (const m of read.messages) {
-            if (typeof m.from !== "string" || typeof m.text !== "string") continue;
-            out.push({
-              room,
-              seq: typeof m.seq === "number" ? m.seq : 0,
-              from: m.from,
-              text: m.text,
-              ts: typeof m.ts === "string" ? m.ts : "",
-            });
-          }
+          out.push(...collect(read.messages ?? []));
         } catch {
           /* a dropped page never blocks the rest */
         }
